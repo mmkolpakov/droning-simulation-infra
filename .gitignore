@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+env/
+
+# Environment files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# Runtime outputs
+logs/
+runs/
+artifacts/
+tmp/
+*.log
+*.sqlite
+*.db
+
+# Editor files
+.idea/
+.vscode/
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store

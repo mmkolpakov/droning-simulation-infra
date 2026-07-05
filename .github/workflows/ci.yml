@@ -1,0 +1,70 @@
+---
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Install validation tools
+        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+      - name: Validate contracts and YAML
+        run: make validate
+      - name: Upload validation reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: validation-reports
+          path: artifacts/
+
+  docker-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - name: Inspect upstream image manifests
+        run: make docker-manifests
+      - name: Build simulation image
+        run: |
+          IMAGE_CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          IMAGE_SOURCE="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+          IMAGE_VERSION="${GITHUB_SHA}" \
+          VCS_REF="${GITHUB_SHA}" \
+          IMAGE_TAG="droning/ros-jazzy-mavros-gazebo:ci" \
+            make docker-build
+      - name: Smoke simulation image
+        run: IMAGE_TAG="droning/ros-jazzy-mavros-gazebo:ci" make docker-smoke
+      - name: Inspect local image metadata
+        run: IMAGE_TAG="droning/ros-jazzy-mavros-gazebo:ci" make docker-metadata
+      - name: Check recorded package versions
+        run: make docker-update-check
+      - name: Prepare security reports
+        run: mkdir -p artifacts/security
+      - name: Scan image
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8  # v0.36.0
+        with:
+          image-ref: droning/ros-jazzy-mavros-gazebo:ci
+          format: sarif
+          output: artifacts/security/trivy-image.sarif
+          exit-code: "0"
+      - name: Upload Docker reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: docker-reports
+          path: artifacts/

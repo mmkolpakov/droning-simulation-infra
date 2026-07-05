@@ -1,0 +1,161 @@
+{
+  "stack_id": "simulation_stack",
+  "version_date": "2026-07-05",
+  "target_host": {
+    "os": [
+      "windows_11",
+      "wsl2",
+      "linux"
+    ],
+    "container_runtime": "docker",
+    "gpu_required": false
+  },
+  "images": {
+    "ros_base": {
+      "image": "osrf/ros:jazzy-simulation",
+      "role": "ROS 2 Jazzy LTS base with simulation packages on Ubuntu 24.04 Noble.",
+      "source": "https://hub.docker.com/r/osrf/ros/tags",
+      "observed_digest": "sha256:acb7c427deb2aaa5acd0fdfa5f6cca9ad2055a64102b4667986b70d550dc469d",
+      "release_gate": true
+    },
+    "ros_mavros_gazebo": {
+      "image": "droning/ros-jazzy-mavros-gazebo:2026-07-05",
+      "local_tag": "droning/ros-jazzy-mavros-gazebo:2026-07-05",
+      "role": "Local project image with ROS 2 Jazzy, MAVROS, ROS-Gazebo, OpenCV, and rosbag2 MCAP.",
+      "source": "infra/docker/ros-jazzy-mavros-gazebo.Dockerfile",
+      "release_gate": true
+    },
+    "ardupilot_dev_base": {
+      "image": "ardupilot/ardupilot-dev-base:v0.2.0",
+      "role": "ArduPilot build and SITL base image for local CPU/WSL2 smoke tests.",
+      "source": "https://hub.docker.com/r/ardupilot/ardupilot-dev-base/tags",
+      "observed_last_updated": "2026-06-25T17:21:34Z",
+      "release_gate": true
+    },
+    "px4_sitl_gazebo": {
+      "image": "px4io/px4-sitl-gazebo:v1.18.0-alpha1-amd64",
+      "role": "Ready PX4 SITL with Gazebo sensors for exploratory checks.",
+      "source": "https://hub.docker.com/r/px4io/px4-sitl-gazebo/tags",
+      "observed_last_updated": "2026-05-13T19:26:55Z",
+      "release_gate": false,
+      "notes": [
+        "Alpha PX4 tag. Keep outside release gates until a stable v1.18 tag is available."
+      ]
+    }
+  },
+  "packages": {
+    "mavros": {
+      "package": "ros-jazzy-mavros",
+      "version": "2.14.0-1noble.20260615.151804",
+      "source": "http://packages.ros.org/ros2/ubuntu noble/main amd64 Packages",
+      "observed_at": "2026-07-05"
+    },
+    "mavros_extras": {
+      "package": "ros-jazzy-mavros-extras",
+      "version": "2.14.0-1noble.20260615.154428",
+      "source": "http://packages.ros.org/ros2/ubuntu noble/main amd64 Packages",
+      "observed_at": "2026-07-05"
+    },
+    "mavros_msgs": {
+      "package": "ros-jazzy-mavros-msgs",
+      "version": "2.14.0-1noble.20260615.130828",
+      "source": "http://packages.ros.org/ros2/ubuntu noble/main amd64 Packages",
+      "observed_at": "2026-07-05"
+    },
+    "mavlink": {
+      "package": "ros-jazzy-mavlink",
+      "version": "2026.3.3-1noble.20260303.233645",
+      "source": "http://packages.ros.org/ros2/ubuntu noble/main amd64 Packages",
+      "observed_at": "2026-07-05"
+    },
+    "ros_gz": {
+      "package": "ros-jazzy-ros-gz",
+      "version": "1.0.22-1noble.20260616.074726",
+      "source": "http://packages.ros.org/ros2/ubuntu noble/main amd64 Packages",
+      "observed_at": "2026-07-05",
+      "notes": [
+        "Jazzy is paired with Gazebo Harmonic through ros_gz binaries from packages.ros.org."
+      ]
+    },
+    "ros_gz_bridge": {
+      "package": "ros-jazzy-ros-gz-bridge",
+      "version": "1.0.22-1noble.20260615.142443",
+      "source": "http://packages.ros.org/ros2/ubuntu noble/main amd64 Packages",
+      "observed_at": "2026-07-05"
+    },
+    "ros_gz_sim": {
+      "package": "ros-jazzy-ros-gz-sim",
+      "version": "1.0.22-1noble.20260615.173223",
+      "source": "http://packages.ros.org/ros2/ubuntu noble/main amd64 Packages",
+      "observed_at": "2026-07-05"
+    },
+    "python_opencv": {
+      "package": "python3-opencv",
+      "version": "4.6.0+dfsg-13.1ubuntu1",
+      "source": "http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages",
+      "observed_at": "2026-07-05",
+      "notes": [
+        "Use Ubuntu package inside the ROS image to avoid ABI conflicts with ROS apt packages."
+      ]
+    },
+    "cv_bridge": {
+      "package": "ros-jazzy-cv-bridge",
+      "version": "4.1.0-1noble.20260615.144656",
+      "source": "http://packages.ros.org/ros2/ubuntu noble/main amd64 Packages",
+      "observed_at": "2026-07-05"
+    },
+    "vision_opencv": {
+      "package": "ros-jazzy-vision-opencv",
+      "version": "4.1.0-1noble.20260615.154006",
+      "source": "http://packages.ros.org/ros2/ubuntu noble/main amd64 Packages",
+      "observed_at": "2026-07-05"
+    },
+    "rosbag2": {
+      "package": "ros-jazzy-rosbag2",
+      "version": "0.26.11-1noble.20260616.084050",
+      "source": "http://packages.ros.org/ros2/ubuntu noble/main amd64 Packages",
+      "observed_at": "2026-07-05"
+    },
+    "rosbag2_storage_mcap": {
+      "package": "ros-jazzy-rosbag2-storage-mcap",
+      "version": "0.26.11-1noble.20260616.074830",
+      "source": "http://packages.ros.org/ros2/ubuntu noble/main amd64 Packages",
+      "observed_at": "2026-07-05"
+    }
+  },
+  "source_refs": {
+    "px4_v1_18_alpha1": {
+      "repository": "https://github.com/PX4/PX4-Autopilot.git",
+      "ref": "v1.18.0-alpha1",
+      "sha": "6d2f2624b5cd0be0a2f41c2b45ae6b7d0a7d6e3f"
+    },
+    "px4_v1_17_0": {
+      "repository": "https://github.com/PX4/PX4-Autopilot.git",
+      "ref": "v1.17.0",
+      "sha": "a5eb12d2ab591251faa009f76b2685b8cc64405d"
+    },
+    "ardupilot_master_observed": {
+      "repository": "https://github.com/ArduPilot/ardupilot.git",
+      "ref": "master",
+      "sha": "5152cde4046b6c0bac5de44fc5d8d0caa925f041"
+    }
+  },
+  "smoke_expectations": {
+    "ros_packages": [
+      "mavros",
+      "mavros_extras",
+      "mavros_msgs",
+      "ros_gz_bridge",
+      "ros_gz_sim",
+      "rosbag2_storage_mcap"
+    ],
+    "python_imports": [
+      "cv2",
+      "cv_bridge"
+    ],
+    "commands": [
+      "gz sim --help",
+      "ros2 bag record -s mcap --help"
+    ]
+  }
+}
