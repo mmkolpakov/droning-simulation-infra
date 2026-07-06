@@ -1,6 +1,6 @@
 {
   "stack_id": "simulation_stack",
-  "version_date": "2026-07-05",
+  "version_date": "2026-07-06",
   "target_host": {
     "os": [
       "windows_11",
@@ -49,6 +49,25 @@
       "release_gate": false,
       "notes": [
         "Used only by the optional nvidia Compose profile."
+      ]
+    },
+    "nvidia_pytorch_base": {
+      "image": "nvcr.io/nvidia/pytorch:26.06-py3",
+      "role": "Optional NVIDIA PyTorch base image with CUDA and TensorRT for accelerated inference checks.",
+      "source": "https://catalog.ngc.nvidia.com/orgs/nvidia/containers/pytorch",
+      "release_gate": false,
+      "notes": [
+        "Used as the base image for the optional accelerated inference runtime."
+      ]
+    },
+    "accelerated_inference_runtime": {
+      "image": "robotics/accelerated-inference:2026-07-05",
+      "local_tag": "robotics/accelerated-inference:2026-07-05",
+      "role": "Optional NVIDIA inference runtime with ONNX Runtime GPU, PyTorch CUDA, TensorRT, and CUDA checks.",
+      "source": "infra/docker/accelerated-inference.Dockerfile",
+      "release_gate": false,
+      "notes": [
+        "Used only by the optional inference Compose profile on hosts with NVIDIA container runtime."
       ]
     },
     "dds_agent": {
@@ -286,6 +305,16 @@
       "version": "2.3.1-1noble.20260616.083207",
       "source": "http://packages.ros.org/ros2/ubuntu noble/main amd64 Packages",
       "observed_at": "2026-07-05"
+    },
+    "onnxruntime_gpu": {
+      "package": "onnxruntime-gpu",
+      "version": "1.27.0",
+      "source": "https://pypi.org/project/onnxruntime-gpu/1.27.0/",
+      "package_manager": "pip",
+      "observed_at": "2026-07-06",
+      "notes": [
+        "Installed only in the optional accelerated inference runtime."
+      ]
     }
   },
   "source_refs": {
@@ -392,6 +421,19 @@
         "release_gate": false,
         "commands": [
           "MicroXRCEAgent --help"
+        ]
+      },
+      "accelerated_inference_runtime": {
+        "service": "accelerated-inference",
+        "compose_profile": "inference",
+        "release_gate": false,
+        "python_imports": [
+          "onnxruntime",
+          "torch",
+          "tensorrt"
+        ],
+        "commands": [
+          "python3 -c \"import torch; raise SystemExit(0 if torch.cuda.is_available() else 1)\""
         ]
       }
     }

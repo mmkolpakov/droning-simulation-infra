@@ -1,0 +1,27 @@
+---
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-json
+      - id: check-yaml
+  - repo: local
+    hooks:
+      - id: check-jsonschema-infra
+        name: Validate JSON schemas and manifests
+        entry: make validate-json
+        language: system
+        pass_filenames: false
+      - id: yamllint
+        name: Validate YAML
+        entry: make validate-yaml
+        language: system
+        pass_filenames: false
+      - id: hadolint
+        name: Lint Dockerfiles
+        entry: make lint-dockerfile
+        language: system
+        pass_filenames: false
+

@@ -17,6 +17,12 @@
       "result": "not_run",
       "duration_s": null,
       "log": "artifacts/reports/compose-smoke.txt"
+    },
+    {
+      "id": "integration_smoke",
+      "result": "not_run",
+      "duration_s": null,
+      "log": "artifacts/reports/integration-smoke.txt"
     }
   ],
   "metrics": {},
@@ -24,6 +30,12 @@
     {
       "kind": "log",
       "path": "artifacts/reports/compose-smoke.txt",
+      "media_type": "text/plain",
+      "required": true
+    },
+    {
+      "kind": "log",
+      "path": "artifacts/reports/integration-smoke.txt",
       "media_type": "text/plain",
       "required": true
     },

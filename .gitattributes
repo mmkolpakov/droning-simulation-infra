@@ -3,7 +3,11 @@
 *.Dockerfile text eol=lf
 Makefile text eol=lf
 *.json text eol=lf
+*.jq text eol=lf
 *.md text eol=lf
+*.py text eol=lf
+*.sdf text eol=lf
+*.sh text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
 *.txt text eol=lf

@@ -1,0 +1,16 @@
+---
+services:
+  simulation:
+    environment:
+      ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-42}"
+      RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"
+      PRODUCT_CONFIG_DIR: "${PRODUCT_CONFIG_DIR:-/workspace/product/config}"
+    volumes:
+      - ./product:/workspace/product:rw
+      - ./data:/workspace/data:rw
+
+  media-runtime:
+    environment:
+      ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-42}"
+    volumes:
+      - ./data:/workspace/data:rw

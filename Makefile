@@ -7,13 +7,17 @@ IMAGE_TAG ?= robotics/ros-jazzy-simulation:2026-07-05
 DDS_AGENT_IMAGE_TAG ?= robotics/dds-agent:2026-07-05
 MEDIA_IMAGE_TAG ?= robotics/media-runtime:2026-07-05
 DIAGNOSTICS_IMAGE_TAG ?= robotics/diagnostics-runtime:2026-07-05
+INFERENCE_IMAGE_TAG ?= robotics/accelerated-inference:2026-07-05
+NVIDIA_PYTORCH_BASE_IMAGE ?= nvcr.io/nvidia/pytorch:26.06-py3
+ONNXRUNTIME_GPU_VERSION ?= 1.27.0
 IMAGE_SOURCE ?= local
 IMAGE_VERSION ?= 2026-07-05
 VCS_REF ?= local
 IMAGE_CREATED ?= unknown
 DOCKER_BUILD_NETWORK ?= host
 DOCKER_RUN_NETWORK ?= host
-DOCKER_INSPECT_RETRIES ?= 3
+DOCKER_BUILD_RETRIES ?= 3
+DOCKER_INSPECT_RETRIES ?= 6
 COMPOSE ?= docker compose
 COMPOSE_FILE := compose.yaml
 REPORT_DIR ?= artifacts/reports
@@ -28,14 +32,17 @@ RUNTIME_PROFILES := infra/stack/runtime-profiles.json
 RUNTIME_PROFILES_SCHEMA := contracts/infra/runtime-profiles.v1.schema.json
 EVIDENCE_MANIFEST_EXAMPLE := infra/stack/evidence-manifest.example.json
 EVIDENCE_MANIFEST_SCHEMA := contracts/infra/evidence-manifest.v1.schema.json
+EVIDENCE_MANIFEST_FILTER := infra/stack/evidence-manifest.jq
+EVIDENCE_MANIFEST := $(REPORT_DIR)/evidence-manifest.json
 DOCKERFILE := infra/docker/ros-jazzy-mavros-gazebo.Dockerfile
-DOCKERFILES := $(DOCKERFILE) infra/docker/dds-agent.Dockerfile infra/docker/media-runtime.Dockerfile infra/docker/diagnostics-runtime.Dockerfile
+DOCKERFILES := $(DOCKERFILE) infra/docker/accelerated-inference.Dockerfile infra/docker/dds-agent.Dockerfile infra/docker/media-runtime.Dockerfile infra/docker/diagnostics-runtime.Dockerfile
 
 .PHONY: validate validate-json validate-yaml compose-config lint lint-dockerfile lint-actions profiles review \
 	docker-manifests docker-pull compose-build compose-smoke compose-autopilot-smoke compose-ardupilot-smoke \
 	compose-px4-smoke compose-dds-smoke compose-comms-smoke compose-media-smoke compose-diagnostics-smoke \
-	compose-sensor-smoke compose-gpu-smoke compose-render-smoke compose-edge-config optional-smoke \
-	docker-metadata docker-update-check sbom security-scan ci clean
+	compose-sensor-smoke integration-smoke compose-gpu-smoke compose-accelerated-inference-smoke \
+	compose-render-smoke compose-edge-config optional-smoke docker-metadata docker-update-check \
+	evidence-manifest sbom security-scan pre-commit ci clean
 
 validate: validate-json validate-yaml compose-config
 
@@ -53,7 +60,7 @@ validate-json:
 	python3 -m json.tool "$(EVIDENCE_MANIFEST_SCHEMA)" > "$(REPORT_DIR)/evidence-manifest.v1.schema.json"
 
 validate-yaml:
-	yamllint .github .yamllint.yml "$(COMPOSE_FILE)"
+	yamllint .github .yamllint.yml "$(COMPOSE_FILE)" compose.override.yaml.example config
 
 compose-config:
 	mkdir -p "$(REPORT_DIR)"
@@ -67,6 +74,7 @@ compose-config:
 	$(COMPOSE) -f "$(COMPOSE_FILE)" --profile diagnostics config > "$(REPORT_DIR)/compose.diagnostics.yaml"
 	$(COMPOSE) -f "$(COMPOSE_FILE)" --profile render config > "$(REPORT_DIR)/compose.render.yaml"
 	$(COMPOSE) -f "$(COMPOSE_FILE)" --profile nvidia config > "$(REPORT_DIR)/compose.nvidia.yaml"
+	$(COMPOSE) -f "$(COMPOSE_FILE)" --profile inference config > "$(REPORT_DIR)/compose.inference.yaml"
 	$(COMPOSE) -f "$(COMPOSE_FILE)" --profile edge config > "$(REPORT_DIR)/compose.edge.yaml"
 
 lint: lint-dockerfile lint-actions
@@ -92,7 +100,8 @@ profiles:
 	jq -r '.profiles | to_entries[] | [.key, .value.status, .value.release_gate, .value.purpose] | @tsv' \
 		"$(RUNTIME_PROFILES)" | tee "$(REPORT_DIR)/runtime-profiles.tsv"
 
-review: validate lint profiles compose-build compose-smoke compose-sensor-smoke compose-autopilot-smoke docker-metadata sbom
+review: validate lint profiles compose-build compose-smoke compose-sensor-smoke integration-smoke \
+	compose-autopilot-smoke docker-metadata security-scan sbom evidence-manifest
 
 docker-manifests:
 	mkdir -p "$(REPORT_DIR)"
@@ -115,13 +124,18 @@ docker-pull:
 
 compose-build:
 	mkdir -p "$(REPORT_DIR)"
-	IMAGE_TAG="$(IMAGE_TAG)" \
-	IMAGE_CREATED="$(IMAGE_CREATED)" \
-	IMAGE_SOURCE="$(IMAGE_SOURCE)" \
-	IMAGE_VERSION="$(IMAGE_VERSION)" \
-	VCS_REF="$(VCS_REF)" \
-	DOCKER_BUILD_NETWORK="$(DOCKER_BUILD_NETWORK)" \
-		$(COMPOSE) -f "$(COMPOSE_FILE)" build simulation
+	n=0; \
+	until IMAGE_TAG="$(IMAGE_TAG)" \
+		IMAGE_CREATED="$(IMAGE_CREATED)" \
+		IMAGE_SOURCE="$(IMAGE_SOURCE)" \
+		IMAGE_VERSION="$(IMAGE_VERSION)" \
+		VCS_REF="$(VCS_REF)" \
+		DOCKER_BUILD_NETWORK="$(DOCKER_BUILD_NETWORK)" \
+			$(COMPOSE) -f "$(COMPOSE_FILE)" build simulation; do \
+		n=$$((n + 1)); \
+		if [[ "$$n" -ge "$(DOCKER_BUILD_RETRIES)" ]]; then exit 1; fi; \
+		sleep $$((5 * n)); \
+	done
 
 compose-smoke:
 	mkdir -p "$(REPORT_DIR)"
@@ -155,7 +169,12 @@ compose-px4-smoke:
 
 compose-dds-smoke:
 	mkdir -p "$(REPORT_DIR)"
-	$(COMPOSE) -f "$(COMPOSE_FILE)" --profile dds build dds-agent
+	n=0; \
+	until $(COMPOSE) -f "$(COMPOSE_FILE)" --profile dds build dds-agent; do \
+		n=$$((n + 1)); \
+		if [[ "$$n" -ge "$(DOCKER_BUILD_RETRIES)" ]]; then exit 1; fi; \
+		sleep $$((5 * n)); \
+	done
 	rc=0; \
 	COMPOSE_NETWORK_MODE="$(DOCKER_RUN_NETWORK)" \
 		$(COMPOSE) -f "$(COMPOSE_FILE)" --profile dds run --rm --no-deps dds-agent \
@@ -174,7 +193,12 @@ compose-comms-smoke:
 
 compose-media-smoke:
 	mkdir -p "$(REPORT_DIR)"
-	$(COMPOSE) -f "$(COMPOSE_FILE)" --profile media build media-runtime
+	n=0; \
+	until $(COMPOSE) -f "$(COMPOSE_FILE)" --profile media build media-runtime; do \
+		n=$$((n + 1)); \
+		if [[ "$$n" -ge "$(DOCKER_BUILD_RETRIES)" ]]; then exit 1; fi; \
+		sleep $$((5 * n)); \
+	done
 	rc=0; \
 	IMAGE_TAG="$(IMAGE_TAG)" COMPOSE_NETWORK_MODE="$(DOCKER_RUN_NETWORK)" \
 		$(COMPOSE) -f "$(COMPOSE_FILE)" --profile media run --rm --no-deps media-runtime \
@@ -184,7 +208,12 @@ compose-media-smoke:
 
 compose-diagnostics-smoke:
 	mkdir -p "$(REPORT_DIR)"
-	$(COMPOSE) -f "$(COMPOSE_FILE)" --profile diagnostics build diagnostics-runtime
+	n=0; \
+	until $(COMPOSE) -f "$(COMPOSE_FILE)" --profile diagnostics build diagnostics-runtime; do \
+		n=$$((n + 1)); \
+		if [[ "$$n" -ge "$(DOCKER_BUILD_RETRIES)" ]]; then exit 1; fi; \
+		sleep $$((5 * n)); \
+	done
 	rc=0; \
 	IMAGE_TAG="$(IMAGE_TAG)" COMPOSE_NETWORK_MODE="$(DOCKER_RUN_NETWORK)" \
 		$(COMPOSE) -f "$(COMPOSE_FILE)" --profile diagnostics run --rm --no-deps diagnostics-runtime \
@@ -212,6 +241,16 @@ compose-sensor-smoke:
 	$(COMPOSE) -f "$(COMPOSE_FILE)" down --remove-orphans || true; \
 	exit $$rc
 
+integration-smoke:
+	mkdir -p "$(REPORT_DIR)"
+	rc=0; \
+	IMAGE_TAG="$(IMAGE_TAG)" COMPOSE_NETWORK_MODE="$(DOCKER_RUN_NETWORK)" \
+		$(COMPOSE) -f "$(COMPOSE_FILE)" run --rm --no-deps simulation \
+		bash /workspace/infra/smoke/simulation_integration_smoke.sh \
+		2>&1 | tee "$(REPORT_DIR)/integration-smoke.txt" || rc=$$?; \
+	$(COMPOSE) -f "$(COMPOSE_FILE)" down --remove-orphans || true; \
+	exit $$rc
+
 compose-gpu-smoke:
 	mkdir -p "$(REPORT_DIR)"
 	rc=0; \
@@ -219,6 +258,29 @@ compose-gpu-smoke:
 		$(COMPOSE) -f "$(COMPOSE_FILE)" --profile nvidia run --rm --no-deps nvidia-gpu \
 		2>&1 | tee "$(REPORT_DIR)/compose-gpu-smoke.txt" || rc=$$?; \
 	$(COMPOSE) -f "$(COMPOSE_FILE)" --profile nvidia down --remove-orphans || true; \
+	exit $$rc
+
+compose-accelerated-inference-smoke:
+	mkdir -p "$(REPORT_DIR)"
+	n=0; \
+	until INFERENCE_IMAGE_TAG="$(INFERENCE_IMAGE_TAG)" \
+		NVIDIA_PYTORCH_BASE_IMAGE="$(NVIDIA_PYTORCH_BASE_IMAGE)" \
+		ONNXRUNTIME_GPU_VERSION="$(ONNXRUNTIME_GPU_VERSION)" \
+		IMAGE_CREATED="$(IMAGE_CREATED)" \
+		IMAGE_SOURCE="$(IMAGE_SOURCE)" \
+		IMAGE_VERSION="$(IMAGE_VERSION)" \
+		VCS_REF="$(VCS_REF)" \
+		DOCKER_BUILD_NETWORK="$(DOCKER_BUILD_NETWORK)" \
+			$(COMPOSE) -f "$(COMPOSE_FILE)" --profile inference build accelerated-inference; do \
+		n=$$((n + 1)); \
+		if [[ "$$n" -ge "$(DOCKER_BUILD_RETRIES)" ]]; then exit 1; fi; \
+		sleep $$((5 * n)); \
+	done
+	rc=0; \
+	INFERENCE_IMAGE_TAG="$(INFERENCE_IMAGE_TAG)" COMPOSE_NETWORK_MODE="$(DOCKER_RUN_NETWORK)" \
+		$(COMPOSE) -f "$(COMPOSE_FILE)" --profile inference run --rm --no-deps accelerated-inference \
+		2>&1 | tee "$(REPORT_DIR)/compose-accelerated-inference-smoke.txt" || rc=$$?; \
+	$(COMPOSE) -f "$(COMPOSE_FILE)" --profile inference down --remove-orphans || true; \
 	exit $$rc
 
 compose-render-smoke:
@@ -240,9 +302,29 @@ docker-metadata:
 	mkdir -p "$(REPORT_DIR)"
 	docker image inspect "$(IMAGE_TAG)" > "$(REPORT_DIR)/docker-image-inspect.json"
 
+evidence-manifest:
+	mkdir -p "$(REPORT_DIR)"
+	if [[ ! -s "$(REPORT_DIR)/compose-smoke.txt" ]]; then echo "Missing $(REPORT_DIR)/compose-smoke.txt" >&2; exit 1; fi
+	if [[ ! -s "$(REPORT_DIR)/compose-sensor-smoke.txt" ]]; then echo "Missing $(REPORT_DIR)/compose-sensor-smoke.txt" >&2; exit 1; fi
+	if [[ ! -s "$(REPORT_DIR)/integration-smoke.txt" ]]; then echo "Missing $(REPORT_DIR)/integration-smoke.txt" >&2; exit 1; fi
+	if [[ ! -s "$(REPORT_DIR)/compose-autopilot-smoke.txt" ]]; then echo "Missing $(REPORT_DIR)/compose-autopilot-smoke.txt" >&2; exit 1; fi
+	if [[ ! -s "$(REPORT_DIR)/docker-image-inspect.json" ]]; then echo "Missing $(REPORT_DIR)/docker-image-inspect.json" >&2; exit 1; fi
+	image_digest="$$(jq -r '.[0].RepoDigests[0] // empty' "$(REPORT_DIR)/docker-image-inspect.json")"; \
+	source_ref="$$(jq -r '.[0].Config.Labels["org.opencontainers.image.revision"] // empty' "$(REPORT_DIR)/docker-image-inspect.json")"; \
+	sarif_result="$$(if [[ -s "$(SECURITY_DIR)/trivy-image.sarif" ]]; then echo pass; else echo not_run; fi)"; \
+	jq -n \
+		--arg created_at "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		--arg run_id "$${RUN_ID:-local-review}" \
+		--arg image "$(IMAGE_TAG)" \
+		--arg image_digest "$${image_digest}" \
+		--arg source_ref "$${source_ref}" \
+		--arg sarif_result "$${sarif_result}" \
+		-f "$(EVIDENCE_MANIFEST_FILTER)" > "$(EVIDENCE_MANIFEST)"
+	check-jsonschema --schemafile "$(EVIDENCE_MANIFEST_SCHEMA)" "$(EVIDENCE_MANIFEST)"
+
 docker-update-check:
 	mkdir -p "$(REPORT_DIR)"
-	jq -r '.packages | to_entries[] | [.key, .value.package, .value.version] | @tsv' \
+	jq -r '.packages | to_entries[] | select((.value.package_manager // "apt") == "apt") | [.key, .value.package, .value.version] | @tsv' \
 		"$(STACK_MANIFEST)" > "$(REPORT_DIR)/package-refs.tsv"
 	docker run --rm \
 		--network "$(DOCKER_RUN_NETWORK)" \
@@ -276,7 +358,10 @@ sbom:
 		"$(IMAGE_TAG)"
 
 ci: validate lint docker-manifests compose-build compose-smoke compose-sensor-smoke compose-autopilot-smoke docker-metadata \
-	docker-update-check security-scan sbom
+	integration-smoke docker-update-check security-scan sbom evidence-manifest
+
+pre-commit:
+	pre-commit run --all-files
 
 clean:
 	rm -rf artifacts

@@ -1,6 +1,6 @@
 {
   "matrix_id": "robotics_simulation_runtime_profiles",
-  "version_date": "2026-07-05",
+  "version_date": "2026-07-06",
   "policy": {
     "public_scope": "Reusable infrastructure for robotics simulation, runtime checks, data capture, and integration boundaries.",
     "product_logic": "out_of_scope",
@@ -51,10 +51,16 @@
           "id": "smoke_image",
           "command": "make compose-smoke",
           "required": true
+        },
+        {
+          "id": "integration_smoke",
+          "command": "make integration-smoke",
+          "required": true
         }
       ],
       "artifacts": [
         "artifacts/reports/compose-smoke.txt",
+        "artifacts/reports/integration-smoke.txt",
         "artifacts/reports/docker-image-inspect.json"
       ]
     },
@@ -110,10 +116,16 @@
           "id": "ardupilot_base_smoke",
           "command": "make compose-ardupilot-smoke",
           "required": true
+        },
+        {
+          "id": "mavros_state_topic",
+          "command": "make integration-smoke",
+          "required": true
         }
       ],
       "artifacts": [
         "artifacts/reports/compose-autopilot-smoke.txt",
+        "artifacts/reports/integration-smoke.txt",
         "artifacts/reports/ardupilot-base-image.txt"
       ]
     },
@@ -474,9 +486,15 @@
           "id": "security_report",
           "command": "make security-scan",
           "required": true
+        },
+        {
+          "id": "evidence_manifest",
+          "command": "make evidence-manifest",
+          "required": true
         }
       ],
       "artifacts": [
+        "artifacts/reports/evidence-manifest.json",
         "artifacts/reports/package-update-check.txt",
         "artifacts/security/trivy-image.sarif"
       ]
@@ -549,7 +567,9 @@
           "components": [
             "cuda_runtime_optional",
             "gpu_container_runtime_optional",
-            "provider_specific_inference_runtime"
+            "onnxruntime_optional",
+            "pytorch_cuda_optional",
+            "tensorrt_optional"
           ],
           "notes": [
             "This profile is not required for the default local and CI gates."
@@ -561,10 +581,16 @@
           "id": "gpu_runtime_probe",
           "command": "make compose-gpu-smoke",
           "required": false
+        },
+        {
+          "id": "accelerated_inference_probe",
+          "command": "make compose-accelerated-inference-smoke",
+          "required": false
         }
       ],
       "artifacts": [
-        "artifacts/reports/compose-gpu-smoke.txt"
+        "artifacts/reports/compose-gpu-smoke.txt",
+        "artifacts/reports/compose-accelerated-inference-smoke.txt"
       ]
     },
     "edge_nvidia_arm64": {
@@ -679,6 +705,16 @@
           "gpu_required": true,
           "notes": [
             "Validated by make compose-gpu-smoke only on hosts with NVIDIA container runtime."
+          ]
+        },
+        {
+          "id": "nvidia_inference_runtime",
+          "status": "optional",
+          "compose_profile": "inference",
+          "release_gate": false,
+          "gpu_required": true,
+          "notes": [
+            "Validated by make compose-accelerated-inference-smoke on hosts with NVIDIA container runtime."
           ]
         }
       ]
@@ -859,12 +895,12 @@
         },
         {
           "id": "accelerated_inference_provider",
-          "status": "external",
-          "compose_profile": null,
+          "status": "optional",
+          "compose_profile": "inference",
           "release_gate": false,
           "gpu_required": true,
           "notes": [
-            "The repository can validate runtime availability, not application model correctness."
+            "The repository validates provider runtime availability, not application model correctness."
           ]
         }
       ]

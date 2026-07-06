@@ -2,6 +2,7 @@
 !infra/
 !infra/docker/
 !infra/docker/ros-jazzy-mavros-gazebo.Dockerfile
+!infra/docker/accelerated-inference.Dockerfile
 !infra/docker/dds-agent.Dockerfile
 !infra/docker/media-runtime.Dockerfile
 !infra/docker/diagnostics-runtime.Dockerfile

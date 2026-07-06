@@ -76,6 +76,13 @@
           "package": { "type": "string" },
           "version": { "type": "string" },
           "source": { "type": "string" },
+          "package_manager": {
+            "type": "string",
+            "enum": [
+              "apt",
+              "pip"
+            ]
+          },
           "observed_at": {
             "type": "string",
             "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
