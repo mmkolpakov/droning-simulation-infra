@@ -261,16 +261,17 @@ compose-sensor-smoke:
 	IMAGE_TAG="$(IMAGE_TAG)" COMPOSE_NETWORK_MODE="$(DOCKER_RUN_NETWORK)" \
 		$(COMPOSE) -f "$(COMPOSE_FILE)" run --rm --no-deps simulation \
 		bash -lc 'source /etc/profile.d/robotics_ros_setup.sh \
-			&& ros2 interface show sensor_msgs/msg/Image >/tmp/sensor-image.txt \
-			&& ros2 interface show sensor_msgs/msg/CameraInfo >/tmp/sensor-camera-info.txt \
-			&& ros2 interface show sensor_msgs/msg/PointCloud2 >/tmp/sensor-pointcloud2.txt \
-			&& ros2 interface show tf2_msgs/msg/TFMessage >/tmp/tf-message.txt \
-			&& ros2 pkg prefix image_transport >/tmp/image-transport-prefix.txt \
-			&& test -s /tmp/sensor-image.txt \
-			&& test -s /tmp/sensor-camera-info.txt \
-			&& test -s /tmp/sensor-pointcloud2.txt \
-			&& test -s /tmp/tf-message.txt \
-			&& test -s /tmp/image-transport-prefix.txt' \
+			&& ros2 interface show sensor_msgs/msg/Image >/dev/null \
+			&& ros2 interface show sensor_msgs/msg/CameraInfo >/dev/null \
+			&& ros2 interface show sensor_msgs/msg/PointCloud2 >/dev/null \
+			&& ros2 interface show tf2_msgs/msg/TFMessage >/dev/null \
+			&& image_transport_prefix="$$(ros2 pkg prefix image_transport)" \
+			&& printf "%s\n" \
+				"sensor_msgs/msg/Image: ok" \
+				"sensor_msgs/msg/CameraInfo: ok" \
+				"sensor_msgs/msg/PointCloud2: ok" \
+				"tf2_msgs/msg/TFMessage: ok" \
+				"image_transport: $${image_transport_prefix}"' \
 		2>&1 | tee "$(REPORT_DIR)/compose-sensor-smoke.txt" || rc=$$?; \
 	$(COMPOSE) -f "$(COMPOSE_FILE)" down --remove-orphans || true; \
 	exit $$rc
