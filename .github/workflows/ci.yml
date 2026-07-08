@@ -29,8 +29,6 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: "3.12"
-      - name: Install validation tools
-        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
       - name: Validate contracts and YAML
         run: make validate
       - name: Upload validation reports
@@ -54,8 +52,6 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: "3.12"
-      - name: Install validation tools
-        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
       - name: Lint Dockerfile and workflows
         run: make lint
       - name: Inspect upstream image manifests

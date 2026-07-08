@@ -2,12 +2,22 @@ unexport BASH_ENV
 
 SHELL := /bin/bash
 .SHELLFLAGS := -euo pipefail -c
+.DEFAULT_GOAL := help
 
 ifneq (,$(wildcard .env))
 include .env
 export
 endif
 
+PYTHON ?= python3
+VENV_DIR ?= .venv
+VENV_PYTHON := $(VENV_DIR)/bin/python
+VENV_BIN := $(VENV_DIR)/bin
+DEV_REQUIREMENTS := requirements-dev.txt
+BOOTSTRAP_STAMP := $(VENV_DIR)/.requirements-dev.stamp
+CHECK_JSONSCHEMA := $(VENV_BIN)/check-jsonschema
+YAMLLINT := $(VENV_BIN)/yamllint
+PRE_COMMIT := $(VENV_BIN)/pre-commit
 IMAGE_TAG ?= robotics/ros-jazzy-simulation:2026-07-05
 DDS_AGENT_IMAGE_TAG ?= robotics/dds-agent:2026-07-05
 MEDIA_IMAGE_TAG ?= robotics/media-runtime:2026-07-05
@@ -24,6 +34,8 @@ DOCKER_RUN_NETWORK ?= host
 DOCKER_BUILD_RETRIES ?= 3
 DOCKER_INSPECT_RETRIES ?= 6
 COMPOSE ?= docker compose
+BAKE ?= docker buildx bake
+BAKE_ALLOW ?= --allow=network.host
 COMPOSE_FILE := compose.yaml
 DEV_SERVICE ?= simulation-dev
 REPORT_DIR ?= artifacts/reports
@@ -48,35 +60,60 @@ INFRA_RELEASE_SCHEMA := contracts/infra/infra-release.v1.schema.json
 DOCKERFILE := infra/docker/ros-jazzy-mavros-gazebo.Dockerfile
 DOCKERFILES := $(DOCKERFILE) infra/docker/accelerated-inference.Dockerfile infra/docker/dds-agent.Dockerfile infra/docker/media-runtime.Dockerfile infra/docker/diagnostics-runtime.Dockerfile
 
-.PHONY: validate validate-json validate-yaml compose-config lint lint-dockerfile lint-actions profiles review \
+.PHONY: help bootstrap validate validate-json validate-yaml compose-config lint lint-dockerfile lint-actions profiles review \
 	dev-up dev-shell dev-logs dev-ps dev-down \
-	docker-manifests docker-pull compose-build compose-smoke compose-autopilot-smoke compose-ardupilot-smoke \
+	docker-manifests docker-pull bake-build compose-build compose-smoke compose-autopilot-smoke compose-ardupilot-smoke \
 	compose-px4-smoke compose-dds-smoke compose-comms-smoke compose-media-smoke compose-diagnostics-smoke \
 	compose-sensor-smoke compose-artifact-tooling-smoke integration-smoke joint-motion-smoke \
 	compose-gpu-smoke compose-accelerated-inference-smoke \
 	compose-render-smoke compose-edge-config optional-smoke docker-metadata docker-update-check \
 	evidence-manifest sbom security-scan security-gate pre-commit ci clean
 
-validate: validate-json validate-yaml compose-config
+help:
+	@printf '%s\n' \
+		'Common commands:' \
+		'  docker compose build simulation' \
+		'  docker compose --profile dev up --detach --wait simulation-dev' \
+		'  docker compose --profile dev exec simulation-dev bash' \
+		'' \
+		'Make shortcuts:' \
+		'  make bootstrap      Install local validation tools into .venv' \
+		'  make validate       Validate schemas, YAML and Compose config' \
+		'  make bake-build     Build simulation image with Docker Buildx Bake' \
+		'  make dev-up         Build and start the background dev container' \
+		'  make dev-shell      Open a shell in the background dev container' \
+		'  make dev-down       Stop and remove the background dev container' \
+		'  make review         Run the review gate used before handoff' \
+		'  make ci             Run the full local CI gate'
 
-validate-json:
+bootstrap: $(BOOTSTRAP_STAMP)
+
+$(BOOTSTRAP_STAMP): $(DEV_REQUIREMENTS)
+	$(PYTHON) -m venv "$(VENV_DIR)"
+	"$(VENV_PYTHON)" -m pip install --upgrade pip
+	"$(VENV_PYTHON)" -m pip install --disable-pip-version-check -r "$(DEV_REQUIREMENTS)"
+	touch "$(BOOTSTRAP_STAMP)"
+
+validate: bootstrap validate-json validate-yaml compose-config
+
+validate-json: bootstrap
 	mkdir -p "$(REPORT_DIR)"
-	check-jsonschema --schemafile "$(STACK_SCHEMA)" "$(STACK_MANIFEST)"
-	check-jsonschema --schemafile "$(INFRA_RELEASE_SCHEMA)" "$(INFRA_RELEASE)"
-	check-jsonschema --schemafile "$(RUNTIME_PROFILES_SCHEMA)" "$(RUNTIME_PROFILES)"
-	check-jsonschema --schemafile "$(EVIDENCE_MANIFEST_SCHEMA)" "$(EVIDENCE_MANIFEST_EXAMPLE)"
-	python3 -m json.tool .devcontainer/devcontainer.json > "$(REPORT_DIR)/devcontainer.json"
-	python3 -m json.tool "$(STACK_MANIFEST)" > "$(REPORT_DIR)/simulation-stack.json"
-	python3 -m json.tool "$(STACK_SCHEMA)" > "$(REPORT_DIR)/stack.v1.schema.json"
-	python3 -m json.tool "$(INFRA_RELEASE)" > "$(REPORT_DIR)/infra-release.json"
-	python3 -m json.tool "$(INFRA_RELEASE_SCHEMA)" > "$(REPORT_DIR)/infra-release.v1.schema.json"
-	python3 -m json.tool "$(RUNTIME_PROFILES)" > "$(REPORT_DIR)/runtime-profiles.json"
-	python3 -m json.tool "$(RUNTIME_PROFILES_SCHEMA)" > "$(REPORT_DIR)/runtime-profiles.v1.schema.json"
-	python3 -m json.tool "$(EVIDENCE_MANIFEST_EXAMPLE)" > "$(REPORT_DIR)/evidence-manifest.example.json"
-	python3 -m json.tool "$(EVIDENCE_MANIFEST_SCHEMA)" > "$(REPORT_DIR)/evidence-manifest.v1.schema.json"
+	"$(CHECK_JSONSCHEMA)" --schemafile "$(STACK_SCHEMA)" "$(STACK_MANIFEST)"
+	"$(CHECK_JSONSCHEMA)" --schemafile "$(INFRA_RELEASE_SCHEMA)" "$(INFRA_RELEASE)"
+	"$(CHECK_JSONSCHEMA)" --schemafile "$(RUNTIME_PROFILES_SCHEMA)" "$(RUNTIME_PROFILES)"
+	"$(CHECK_JSONSCHEMA)" --schemafile "$(EVIDENCE_MANIFEST_SCHEMA)" "$(EVIDENCE_MANIFEST_EXAMPLE)"
+	"$(VENV_PYTHON)" -m json.tool .devcontainer/devcontainer.json > "$(REPORT_DIR)/devcontainer.json"
+	"$(VENV_PYTHON)" -m json.tool "$(STACK_MANIFEST)" > "$(REPORT_DIR)/simulation-stack.json"
+	"$(VENV_PYTHON)" -m json.tool "$(STACK_SCHEMA)" > "$(REPORT_DIR)/stack.v1.schema.json"
+	"$(VENV_PYTHON)" -m json.tool "$(INFRA_RELEASE)" > "$(REPORT_DIR)/infra-release.json"
+	"$(VENV_PYTHON)" -m json.tool "$(INFRA_RELEASE_SCHEMA)" > "$(REPORT_DIR)/infra-release.v1.schema.json"
+	"$(VENV_PYTHON)" -m json.tool "$(RUNTIME_PROFILES)" > "$(REPORT_DIR)/runtime-profiles.json"
+	"$(VENV_PYTHON)" -m json.tool "$(RUNTIME_PROFILES_SCHEMA)" > "$(REPORT_DIR)/runtime-profiles.v1.schema.json"
+	"$(VENV_PYTHON)" -m json.tool "$(EVIDENCE_MANIFEST_EXAMPLE)" > "$(REPORT_DIR)/evidence-manifest.example.json"
+	"$(VENV_PYTHON)" -m json.tool "$(EVIDENCE_MANIFEST_SCHEMA)" > "$(REPORT_DIR)/evidence-manifest.v1.schema.json"
 
-validate-yaml:
-	yamllint .github .yamllint.yml "$(COMPOSE_FILE)" compose.override.yaml.example config
+validate-yaml: bootstrap
+	"$(YAMLLINT)" .github .yamllint.yml "$(COMPOSE_FILE)" compose.override.yaml.example config
 
 compose-config:
 	mkdir -p "$(REPORT_DIR)"
@@ -138,6 +175,22 @@ docker-manifests:
 docker-pull:
 	docker pull osrf/ros:jazzy-simulation
 	docker pull ardupilot/ardupilot-dev-base:v0.2.0
+
+bake-build:
+	mkdir -p "$(REPORT_DIR)"
+	IMAGE_TAG="$(IMAGE_TAG)" \
+		DDS_AGENT_IMAGE_TAG="$(DDS_AGENT_IMAGE_TAG)" \
+		MEDIA_IMAGE_TAG="$(MEDIA_IMAGE_TAG)" \
+		DIAGNOSTICS_IMAGE_TAG="$(DIAGNOSTICS_IMAGE_TAG)" \
+		INFERENCE_IMAGE_TAG="$(INFERENCE_IMAGE_TAG)" \
+		NVIDIA_PYTORCH_BASE_IMAGE="$(NVIDIA_PYTORCH_BASE_IMAGE)" \
+		ONNXRUNTIME_GPU_VERSION="$(ONNXRUNTIME_GPU_VERSION)" \
+		IMAGE_CREATED="$(IMAGE_CREATED)" \
+		IMAGE_SOURCE="$(IMAGE_SOURCE)" \
+		IMAGE_VERSION="$(IMAGE_VERSION)" \
+		VCS_REF="$(VCS_REF)" \
+		DOCKER_BUILD_NETWORK="$(DOCKER_BUILD_NETWORK)" \
+			$(BAKE) $(BAKE_ALLOW) simulation
 
 compose-build:
 	mkdir -p "$(REPORT_DIR)"
@@ -363,7 +416,7 @@ docker-metadata:
 	mkdir -p "$(REPORT_DIR)"
 	docker image inspect "$(IMAGE_TAG)" > "$(REPORT_DIR)/docker-image-inspect.json"
 
-evidence-manifest:
+evidence-manifest: bootstrap
 	mkdir -p "$(REPORT_DIR)"
 	if [[ ! -s "$(REPORT_DIR)/compose-smoke.txt" ]]; then echo "Missing $(REPORT_DIR)/compose-smoke.txt" >&2; exit 1; fi
 	if [[ ! -s "$(REPORT_DIR)/compose-sensor-smoke.txt" ]]; then echo "Missing $(REPORT_DIR)/compose-sensor-smoke.txt" >&2; exit 1; fi
@@ -384,7 +437,7 @@ evidence-manifest:
 		--arg source_ref "$${source_ref}" \
 		--arg sarif_result "$${sarif_result}" \
 		-f "$(EVIDENCE_MANIFEST_FILTER)" > "$(EVIDENCE_MANIFEST)"
-	check-jsonschema --schemafile "$(EVIDENCE_MANIFEST_SCHEMA)" "$(EVIDENCE_MANIFEST)"
+	"$(CHECK_JSONSCHEMA)" --schemafile "$(EVIDENCE_MANIFEST_SCHEMA)" "$(EVIDENCE_MANIFEST)"
 
 docker-update-check:
 	mkdir -p "$(REPORT_DIR)"
@@ -444,8 +497,8 @@ sbom:
 ci: validate lint docker-manifests compose-build compose-smoke compose-sensor-smoke compose-artifact-tooling-smoke compose-autopilot-smoke docker-metadata \
 	integration-smoke joint-motion-smoke docker-update-check security-scan security-gate sbom evidence-manifest
 
-pre-commit:
-	pre-commit run --all-files
+pre-commit: bootstrap
+	"$(PRE_COMMIT)" run --all-files
 
 clean:
 	rm -rf artifacts
