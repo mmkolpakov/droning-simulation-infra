@@ -84,13 +84,18 @@ jobs:
         run: make docker-update-check
       - name: Prepare security reports
         run: mkdir -p artifacts/security
-      - name: Scan image
+      - name: Scan image and apply vulnerability gate
+        id: trivy-gate
+        continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           image-ref: robotics/ros-jazzy-simulation:ci
+          version: v0.72.0
           format: sarif
           output: artifacts/security/trivy-image.sarif
-          exit-code: "0"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          exit-code: "1"
       - name: Upload Trivy SARIF
         if: github.event_name == 'push'
         continue-on-error: true
@@ -98,8 +103,13 @@ jobs:
         with:
           sarif_file: artifacts/security/trivy-image.sarif
           category: trivy-image
-      - name: Gate image vulnerabilities
-        run: IMAGE_TAG="robotics/ros-jazzy-simulation:ci" make security-gate
+      - name: Check vulnerability gate result
+        run: |
+          if [[ "${{ steps.trivy-gate.outcome }}" == "failure" ]]; then
+            echo "Trivy gate failed" | tee artifacts/security/trivy-gate.txt
+            exit 1
+          fi
+          echo "Trivy gate passed" | tee artifacts/security/trivy-gate.txt
       - name: Generate SBOM
         run: IMAGE_TAG="robotics/ros-jazzy-simulation:ci" make sbom
       - name: Generate evidence manifest
