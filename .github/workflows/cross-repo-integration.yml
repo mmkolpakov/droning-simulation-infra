@@ -108,7 +108,9 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Build simulation image
+        id: image
         run: |
+          set -euo pipefail
           IMAGE_CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
           IMAGE_SOURCE="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
           IMAGE_VERSION="${GITHUB_SHA}" \
@@ -116,6 +118,17 @@ jobs:
           IMAGE_TAG="robotics/ros-jazzy-simulation:cross-repo" \
           RUN_ID="${{ steps.run.outputs.run_id }}" \
             make compose-build
+          # Evidence must record the digest of the image that was actually
+          # built and run for this scenario, not a hardcoded placeholder.
+          # This build is never pushed to a registry, so there is no
+          # RepoDigest; the local content-addressed image ID from the
+          # Docker daemon is the real, verifiable digest of what was built.
+          digest="$(docker image inspect robotics/ros-jazzy-simulation:cross-repo --format '{{.Id}}')"
+          if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "unexpected image id format: ${digest}" >&2
+            exit 1
+          fi
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
       - name: Validate contracts package
         working-directory: deps/contracts
@@ -142,6 +155,15 @@ jobs:
           # it honestly from the embedded live check.
           ROBOTICS_GRAPH_CHECK_EMBEDDED: "1"
           ROBOTICS_CONTRACTS_SCHEMA_DIR: ${{ github.workspace }}/deps/contracts/schemas
+          # The `ros-observer` sidecar writes its live rclpy verdict to this
+          # path (via the bind-mounted `./runs:/workspace/runs` volume); the
+          # harness CLI reads it from disk instead of trusting
+          # `docker compose`'s exit code alone for `graph_ready`.
+          ROBOTICS_GRAPH_OBSERVED_PATH: >-
+            ${{ github.workspace }}/runs/${{ steps.run.outputs.run_id }}/cross-repo/graph-observed.json
+          # The image built above for this exact run, not a hardcoded
+          # placeholder: evidence must record what was actually tested.
+          ROBOTICS_INFRA_IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
         run: |
           set -euo pipefail
           mkdir -p "runs/${RUN_ID}/cross-repo"
@@ -167,6 +189,7 @@ jobs:
         env:
           RUN_ID: ${{ steps.run.outputs.run_id }}
           ROS_DOMAIN_ID: ${{ steps.run.outputs.ros_domain_id }}
+          EXPECTED_IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
         run: |
           python3 - <<'PY'
           import json
@@ -186,6 +209,18 @@ jobs:
               for c in data["checks"]
           )
           assert graph_ready, data["checks"]
+          # Must be the digest of the image actually built for this run, not
+          # the harness's old hardcoded placeholder default.
+          assert data["infra_image_digest"] == os.environ["EXPECTED_IMAGE_DIGEST"], data
+          # infra is the orchestrating ("business") repo for this run;
+          # contracts/harness SHAs it tested are already pinned in
+          # stack_lock_sha256/contracts_version/harness_version.
+          assert data["business_repo"] is not None, data
+          assert data["business_repo"]["commit"] == os.environ["GITHUB_SHA"], data
+          graph_artifact = next(
+              (a for a in data["artifacts"] if a["name"] == "graph-observed"), None
+          )
+          assert graph_artifact is not None, data["artifacts"]
           print("evidence ok:", evidence_path)
           PY
           python3 - <<'PY'
