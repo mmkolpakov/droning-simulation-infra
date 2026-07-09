@@ -19,19 +19,29 @@ def wait_for_topic(topic: str, timeout_sec: int, *, min_publishers: int = 1) -> 
     name-lookup.
     """
     import rclpy
+    from rclpy.executors import SingleThreadedExecutor
     from rclpy.node import Node
 
+    # An explicit `Context` (rather than the process-default one) is required
+    # because this function runs more than once per process (once per
+    # expected topic): `rclpy.shutdown()` followed by a second `rclpy.init()`
+    # leaves rclpy's *global* executor singleton bound to the first,
+    # already-shut-down default context. `spin_once` falls back to that
+    # global executor whenever no executor is passed explicitly, so an
+    # executor bound to this call's own context must be passed instead.
     context = rclpy.Context()
     rclpy.init(context=context)
     node = Node("integration_smoke_topic_wait", context=context)
+    executor = SingleThreadedExecutor(context=context)
     try:
         deadline = time.monotonic() + timeout_sec
         while time.monotonic() < deadline:
             if node.count_publishers(topic) >= min_publishers:
                 return
-            rclpy.spin_once(node, timeout_sec=0.2)
+            rclpy.spin_once(node, executor=executor, timeout_sec=0.2)
         raise TimeoutError(f"Timed out waiting for a live publisher on {topic}")
     finally:
+        executor.shutdown()
         node.destroy_node()
         rclpy.shutdown(context=context)
 
