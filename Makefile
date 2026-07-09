@@ -274,7 +274,7 @@ compose-smoke: prepare-run
 	IMAGE_TAG="$(IMAGE_TAG)" ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" FASTRTPS_DEFAULT_PROFILES_FILE="/workspace/runs/$(RUN_ID)/dds/fastdds-profile.xml" \
 		$(COMPOSE) -f "$(COMPOSE_FILE)" run --rm --no-deps simulation \
 		2>&1 | tee "$(REPORT_DIR)/compose-smoke.txt" || rc=$$?; \
-	$(COMPOSE) -f "$(COMPOSE_FILE)" down --remove-orphans || true; \
+	ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" $(COMPOSE) -f "$(COMPOSE_FILE)" down --remove-orphans || true; \
 	exit $$rc
 
 compose-autopilot-smoke:
@@ -286,7 +286,7 @@ compose-ardupilot-smoke: prepare-run
 	ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" FASTRTPS_DEFAULT_PROFILES_FILE="/workspace/runs/$(RUN_ID)/dds/fastdds-profile.xml" \
 		$(COMPOSE) -f "$(COMPOSE_FILE)" --profile ardupilot run --rm --no-deps autopilot-base \
 		2>&1 | tee "$(REPORT_DIR)/compose-autopilot-smoke.txt" || rc=$$?; \
-	$(COMPOSE) -f "$(COMPOSE_FILE)" --profile ardupilot down --remove-orphans || true; \
+	ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" $(COMPOSE) -f "$(COMPOSE_FILE)" --profile ardupilot down --remove-orphans || true; \
 	exit $$rc
 
 compose-px4-smoke: prepare-run
@@ -295,7 +295,7 @@ compose-px4-smoke: prepare-run
 	ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" FASTRTPS_DEFAULT_PROFILES_FILE="/workspace/runs/$(RUN_ID)/dds/fastdds-profile.xml" \
 		$(COMPOSE) -f "$(COMPOSE_FILE)" --profile px4 run --rm --no-deps px4-sitl \
 		2>&1 | tee "$(REPORT_DIR)/compose-px4-smoke.txt" || rc=$$?; \
-	$(COMPOSE) -f "$(COMPOSE_FILE)" --profile px4 down --remove-orphans || true; \
+	ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" $(COMPOSE) -f "$(COMPOSE_FILE)" --profile px4 down --remove-orphans || true; \
 	exit $$rc
 
 compose-dds-smoke: prepare-run
@@ -310,7 +310,7 @@ compose-dds-smoke: prepare-run
 	ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" FASTRTPS_DEFAULT_PROFILES_FILE="/workspace/runs/$(RUN_ID)/dds/fastdds-profile.xml" \
 		$(COMPOSE) -f "$(COMPOSE_FILE)" --profile dds run --rm --no-deps dds-agent \
 		2>&1 | tee "$(REPORT_DIR)/compose-dds-smoke.txt" || rc=$$?; \
-	$(COMPOSE) -f "$(COMPOSE_FILE)" --profile dds down --remove-orphans || true; \
+	ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" $(COMPOSE) -f "$(COMPOSE_FILE)" --profile dds down --remove-orphans || true; \
 	exit $$rc
 
 compose-comms-smoke: prepare-run
@@ -319,7 +319,7 @@ compose-comms-smoke: prepare-run
 	ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" FASTRTPS_DEFAULT_PROFILES_FILE="/workspace/runs/$(RUN_ID)/dds/fastdds-profile.xml" \
 		$(COMPOSE) -f "$(COMPOSE_FILE)" --profile comms run --rm --no-deps comms-bridge \
 		2>&1 | tee "$(REPORT_DIR)/compose-comms-smoke.txt" || rc=$$?; \
-	$(COMPOSE) -f "$(COMPOSE_FILE)" --profile comms down --remove-orphans || true; \
+	ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" $(COMPOSE) -f "$(COMPOSE_FILE)" --profile comms down --remove-orphans || true; \
 	exit $$rc
 
 compose-media-smoke: prepare-run
@@ -334,7 +334,7 @@ compose-media-smoke: prepare-run
 	IMAGE_TAG="$(IMAGE_TAG)" ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" FASTRTPS_DEFAULT_PROFILES_FILE="/workspace/runs/$(RUN_ID)/dds/fastdds-profile.xml" \
 		$(COMPOSE) -f "$(COMPOSE_FILE)" --profile media run --rm --no-deps media-runtime \
 		2>&1 | tee "$(REPORT_DIR)/compose-media-smoke.txt" || rc=$$?; \
-	$(COMPOSE) -f "$(COMPOSE_FILE)" --profile media down --remove-orphans || true; \
+	ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" $(COMPOSE) -f "$(COMPOSE_FILE)" --profile media down --remove-orphans || true; \
 	exit $$rc
 
 compose-diagnostics-smoke: prepare-run
@@ -349,7 +349,7 @@ compose-diagnostics-smoke: prepare-run
 	IMAGE_TAG="$(IMAGE_TAG)" ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" FASTRTPS_DEFAULT_PROFILES_FILE="/workspace/runs/$(RUN_ID)/dds/fastdds-profile.xml" \
 		$(COMPOSE) -f "$(COMPOSE_FILE)" --profile diagnostics run --rm --no-deps diagnostics-runtime \
 		2>&1 | tee "$(REPORT_DIR)/compose-diagnostics-smoke.txt" || rc=$$?; \
-	$(COMPOSE) -f "$(COMPOSE_FILE)" --profile diagnostics down --remove-orphans || true; \
+	ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" $(COMPOSE) -f "$(COMPOSE_FILE)" --profile diagnostics down --remove-orphans || true; \
 	exit $$rc
 
 compose-sensor-smoke: prepare-run
@@ -370,7 +370,7 @@ compose-sensor-smoke: prepare-run
 				"tf2_msgs/msg/TFMessage: ok" \
 				"image_transport: $${image_transport_prefix}"' \
 		2>&1 | tee "$(REPORT_DIR)/compose-sensor-smoke.txt" || rc=$$?; \
-	$(COMPOSE) -f "$(COMPOSE_FILE)" down --remove-orphans || true; \
+	ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" $(COMPOSE) -f "$(COMPOSE_FILE)" down --remove-orphans || true; \
 	exit $$rc
 
 compose-artifact-tooling-smoke: prepare-run
@@ -380,7 +380,7 @@ compose-artifact-tooling-smoke: prepare-run
 		$(COMPOSE) -f "$(COMPOSE_FILE)" run --rm --no-deps simulation \
 		bash -lc 'aws --version | grep -E "^aws-cli/2\.35\.17 " && source /etc/profile.d/robotics_ros_setup.sh && ros2 pkg prefix ros_gz_sim >/dev/null' \
 		2>&1 | tee "$(REPORT_DIR)/compose-artifact-tooling-smoke.txt" || rc=$$?; \
-	$(COMPOSE) -f "$(COMPOSE_FILE)" down --remove-orphans || true; \
+	ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" $(COMPOSE) -f "$(COMPOSE_FILE)" down --remove-orphans || true; \
 	exit $$rc
 
 integration-smoke: prepare-run
@@ -392,7 +392,7 @@ integration-smoke: prepare-run
 		simulation \
 		python3 /workspace/infra/smoke/launch_testing/test_integration.py \
 		2>&1 | tee "$(REPORT_DIR)/integration-smoke.txt" || rc=$$?; \
-	$(COMPOSE) -f "$(COMPOSE_FILE)" -p "robotics-$(RUN_ID)" down --remove-orphans || true; \
+	ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" $(COMPOSE) -f "$(COMPOSE_FILE)" -p "robotics-$(RUN_ID)" down --remove-orphans || true; \
 	exit $$rc
 
 joint-motion-smoke: prepare-run
@@ -405,7 +405,7 @@ joint-motion-smoke: prepare-run
 		simulation \
 		python3 /workspace/infra/smoke/launch_testing/test_joint_motion.py \
 		2>&1 | tee "$(REPORT_DIR)/joint-motion-smoke.txt" || rc=$$?; \
-	$(COMPOSE) -f "$(COMPOSE_FILE)" -p "robotics-$(RUN_ID)" down --remove-orphans || true; \
+	ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" $(COMPOSE) -f "$(COMPOSE_FILE)" -p "robotics-$(RUN_ID)" down --remove-orphans || true; \
 	exit $$rc
 
 compose-gpu-smoke: prepare-run
@@ -414,7 +414,7 @@ compose-gpu-smoke: prepare-run
 	ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" FASTRTPS_DEFAULT_PROFILES_FILE="/workspace/runs/$(RUN_ID)/dds/fastdds-profile.xml" \
 		$(COMPOSE) -f "$(COMPOSE_FILE)" --profile nvidia run --rm --no-deps nvidia-gpu \
 		2>&1 | tee "$(REPORT_DIR)/compose-gpu-smoke.txt" || rc=$$?; \
-	$(COMPOSE) -f "$(COMPOSE_FILE)" --profile nvidia down --remove-orphans || true; \
+	ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" $(COMPOSE) -f "$(COMPOSE_FILE)" --profile nvidia down --remove-orphans || true; \
 	exit $$rc
 
 compose-accelerated-inference-smoke: prepare-run
@@ -437,7 +437,7 @@ compose-accelerated-inference-smoke: prepare-run
 	INFERENCE_IMAGE_TAG="$(INFERENCE_IMAGE_TAG)" ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" FASTRTPS_DEFAULT_PROFILES_FILE="/workspace/runs/$(RUN_ID)/dds/fastdds-profile.xml" \
 		$(COMPOSE) -f "$(COMPOSE_FILE)" --profile inference run --rm --no-deps accelerated-inference \
 		2>&1 | tee "$(REPORT_DIR)/compose-accelerated-inference-smoke.txt" || rc=$$?; \
-	$(COMPOSE) -f "$(COMPOSE_FILE)" --profile inference down --remove-orphans || true; \
+	ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" $(COMPOSE) -f "$(COMPOSE_FILE)" --profile inference down --remove-orphans || true; \
 	exit $$rc
 
 compose-render-smoke: prepare-run
@@ -446,7 +446,7 @@ compose-render-smoke: prepare-run
 	IMAGE_TAG="$(IMAGE_TAG)" ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" FASTRTPS_DEFAULT_PROFILES_FILE="/workspace/runs/$(RUN_ID)/dds/fastdds-profile.xml" \
 		$(COMPOSE) -f "$(COMPOSE_FILE)" --profile render run --rm --no-deps local-render \
 		2>&1 | tee "$(REPORT_DIR)/compose-render-smoke.txt" || rc=$$?; \
-	$(COMPOSE) -f "$(COMPOSE_FILE)" --profile render down --remove-orphans || true; \
+	ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" $(COMPOSE) -f "$(COMPOSE_FILE)" --profile render down --remove-orphans || true; \
 	exit $$rc
 
 compose-edge-config:

@@ -121,6 +121,7 @@ jobs:
         working-directory: deps/contracts
         run: |
           make sync-schemas
+          python -m pip install --disable-pip-version-check -r requirements-dev.txt
           make ci
 
       - name: Resolve and execute harness run against compose
@@ -145,7 +146,8 @@ jobs:
             --scenario "runs/${RUN_ID}/cross-repo/resolved-scenario.json" \
             --evidence "runs/${RUN_ID}/evidence-manifest.json" \
             --run-id "${RUN_ID}"
-          docker compose -f compose.yaml down --remove-orphans || true
+          ROS_DOMAIN_ID="${ROS_DOMAIN_ID}" COMPOSE_PROJECT_NAME="robotics-${RUN_ID}" \
+            docker compose -f compose.yaml down --remove-orphans || true
 
       - name: Assert evidence
         env:
@@ -220,8 +222,10 @@ jobs:
             "${EVIDENCE}"
           cosign verify-blob \
             --bundle "runs/${RUN_ID}/evidence-manifest.sigstore.json" \
-            --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/cross-repo-integration.yml@.*" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-identity-regexp \
+              "https://github.com/${{ github.repository }}/.github/workflows/cross-repo-integration.yml@.*" \
+            --certificate-oidc-issuer \
+              "https://token.actions.githubusercontent.com" \
             "${EVIDENCE}"
 
       - name: Upload cross-repo artifacts

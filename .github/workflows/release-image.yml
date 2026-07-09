@@ -91,6 +91,8 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           cosign verify \
-            --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/release-image.yml@.*" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-identity-regexp \
+              "https://github.com/${{ github.repository }}/.github/workflows/release-image.yml@.*" \
+            --certificate-oidc-issuer \
+              "https://token.actions.githubusercontent.com" \
             "${IMAGE_NAME}@${DIGEST}"

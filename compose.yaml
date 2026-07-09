@@ -51,7 +51,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "${SIM_CPU_LIMIT:-4.0}"
+          cpus: "${SIM_CPU_LIMIT:-2.0}"
           memory: "${SIM_MEMORY_LIMIT:-8g}"
 
   simulation-dev:
