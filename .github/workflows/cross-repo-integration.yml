@@ -1,0 +1,183 @@
+---
+name: cross-repo-integration
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * *"
+  repository_dispatch:
+    types:
+      - contracts-ci-success
+      - harness-ci-success
+  push:
+    branches:
+      - foundation-ready-v0.2
+      - main
+    paths:
+      - ".github/workflows/cross-repo-integration.yml"
+      - "infra/cross-repo/**"
+      - "compose.yaml"
+      - "Makefile"
+
+permissions:
+  contents: read
+  id-token: write
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: cross-repo-integration
+  cancel-in-progress: false
+
+jobs:
+  integrate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+    steps:
+      - name: Checkout infra
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Resolve pinned SHAs
+        id: pins
+        run: |
+          set -euo pipefail
+          CONTRACTS_SHA="$(python3 -c 'import json;print(json.load(open("infra/cross-repo/stack-lock.json"))["repositories"]["contracts"]["commit"])')"
+          HARNESS_SHA="$(python3 -c 'import json;print(json.load(open("infra/cross-repo/stack-lock.json"))["repositories"]["harness"]["commit"])')"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          lock = json.loads(Path("infra/cross-repo/stack-lock.json").read_text(encoding="utf-8"))
+          for key in ("infra", "contracts", "harness"):
+              commit = lock["repositories"][key]["commit"]
+              if len(commit) != 40:
+                  raise SystemExit(f"invalid {key} commit: {commit}")
+          PY
+          {
+            echo "contracts_sha=${CONTRACTS_SHA}"
+            echo "harness_sha=${HARNESS_SHA}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Require cross-repo token for private checkouts
+        run: |
+          if [[ -z "${CROSS_REPO_TOKEN}" ]]; then
+            echo "CROSS_REPO_TOKEN secret is required for private contracts/harness checkout" >&2
+            exit 1
+          fi
+
+      - name: Checkout contracts at stack-lock SHA
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          repository: mmkolpakov/robotics-runtime-contracts
+          ref: ${{ steps.pins.outputs.contracts_sha }}
+          token: ${{ secrets.CROSS_REPO_TOKEN }}
+          path: deps/contracts
+          persist-credentials: false
+
+      - name: Checkout harness at stack-lock SHA
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          repository: mmkolpakov/robotics-simulation-harness
+          ref: ${{ steps.pins.outputs.harness_sha }}
+          token: ${{ secrets.CROSS_REPO_TOKEN }}
+          path: deps/harness
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install contracts and harness
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --disable-pip-version-check \
+            "./deps/contracts" \
+            "./deps/harness" \
+            check-jsonschema==0.34.1
+
+      - name: Allocate run identity
+        id: run
+        run: |
+          RUN_ID="cross-repo-${GITHUB_RUN_ID}"
+          make RUN_ID="${RUN_ID}" prepare-run
+          ROS_DOMAIN_ID="$(cat "runs/${RUN_ID}/ros_domain_id.txt")"
+          {
+            echo "run_id=${RUN_ID}"
+            echo "ros_domain_id=${ROS_DOMAIN_ID}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build simulation image
+        run: |
+          IMAGE_CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          IMAGE_SOURCE="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+          IMAGE_VERSION="${GITHUB_SHA}" \
+          VCS_REF="${GITHUB_SHA}" \
+          IMAGE_TAG="robotics/ros-jazzy-simulation:cross-repo" \
+          RUN_ID="${{ steps.run.outputs.run_id }}" \
+            make compose-build
+
+      - name: Validate contracts package
+        working-directory: deps/contracts
+        run: |
+          make sync-schemas
+          make ci
+
+      - name: Resolve and execute harness run against compose
+        env:
+          RUN_ID: ${{ steps.run.outputs.run_id }}
+          ROS_DOMAIN_ID: ${{ steps.run.outputs.ros_domain_id }}
+          IMAGE_TAG: robotics/ros-jazzy-simulation:cross-repo
+          COMPOSE_PROJECT_NAME: robotics-${{ steps.run.outputs.run_id }}
+          FASTRTPS_DEFAULT_PROFILES_FILE: /workspace/runs/${{ steps.run.outputs.run_id }}/dds/fastdds-profile.xml
+          ROBOTICS_RUNS_ROOT: ${{ github.workspace }}/runs
+          ROBOTICS_STACK_LOCK_PATH: ${{ github.workspace }}/infra/cross-repo/stack-lock.json
+          ROBOTICS_SKIP_ROS_OBSERVER: "1"
+          ROBOTICS_CONTRACTS_SCHEMA_DIR: ${{ github.workspace }}/deps/contracts/schemas
+        run: |
+          set -euo pipefail
+          mkdir -p "runs/${RUN_ID}/cross-repo"
+          robotics-harness scenario resolve \
+            --composition infra/cross-repo/composition.yaml \
+            --output "runs/${RUN_ID}/cross-repo/resolved-scenario.json" \
+            --trace "runs/${RUN_ID}/cross-repo/resolution-trace.json"
+          robotics-harness run \
+            --scenario "runs/${RUN_ID}/cross-repo/resolved-scenario.json" \
+            --evidence "runs/${RUN_ID}/evidence-manifest.json" \
+            --run-id "${RUN_ID}"
+          docker compose -f compose.yaml down --remove-orphans || true
+
+      - name: Assert evidence
+        env:
+          RUN_ID: ${{ steps.run.outputs.run_id }}
+          ROS_DOMAIN_ID: ${{ steps.run.outputs.ros_domain_id }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          evidence_path = Path(f"runs/{os.environ['RUN_ID']}/evidence-manifest.json")
+          data = json.loads(evidence_path.read_text(encoding="utf-8"))
+          assert data["result"] == "pass", data
+          assert int(data["ros_domain_id"]) == int(os.environ["ROS_DOMAIN_ID"]), data
+          executed = any(
+              c.get("name") == "process_execution" and c.get("result") == "executed"
+              for c in data["checks"]
+          )
+          assert executed, data["checks"]
+          print("evidence ok:", evidence_path)
+          PY
+          check-jsonschema --schemafile deps/contracts/schemas/evidence-manifest.v1.schema.json \
+            "runs/${RUN_ID}/evidence-manifest.json"
+
+      - name: Upload cross-repo artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: cross-repo-runs
+          path: runs/

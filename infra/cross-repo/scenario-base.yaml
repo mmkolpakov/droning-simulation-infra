@@ -1,0 +1,48 @@
+---
+schema_version: scenario-manifest.v1
+scenario_id: foundation.cross_repo.core_simulation
+title: Cross-repo core simulation compose gate
+target_environment: simulation
+launch:
+  entrypoint: docker_compose
+  package: docker
+  file: compose.yaml
+  arguments:
+    - run
+    - --rm
+    - --no-deps
+    - simulation
+simulation:
+  duration_sec: 120
+  wall_timeout_sec: 600
+  headless: true
+  physics_engine: gz-physics-dartsim-plugin
+expected_ros_graph:
+  schema_version: ros-graph-contract.v1
+  graph_ready_timeout_sec: 5
+  require_clock: false
+  topics:
+    - name: /clock
+      type: rosgraph_msgs/msg/Clock
+      publisher_match:
+        min_count: 0
+        timeout_sec: 5
+      subscriber_match:
+        min_count: 0
+        timeout_sec: 5
+  services: []
+  actions: []
+recording:
+  enabled: true
+  storage: mcap
+  topics:
+    - /clock
+  image_transport:
+    policy: on_failure_only
+  retention:
+    mode: on_failure
+    ttl_days: 7
+    lifecycle_tag: short
+safety:
+  execution_guard:
+    allow_physical_actuation: false
