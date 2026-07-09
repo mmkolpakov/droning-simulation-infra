@@ -47,21 +47,17 @@ jobs:
         id: pins
         run: |
           set -euo pipefail
-          CONTRACTS_SHA="$(python3 -c 'import json;print(json.load(open("infra/cross-repo/stack-lock.json"))["repositories"]["contracts"]["commit"])')"
-          HARNESS_SHA="$(python3 -c 'import json;print(json.load(open("infra/cross-repo/stack-lock.json"))["repositories"]["harness"]["commit"])')"
-          python3 - <<'PY'
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import json
           from pathlib import Path
-          lock = json.loads(Path("infra/cross-repo/stack-lock.json").read_text(encoding="utf-8"))
+          lock = json.loads(Path("infra/cross-repo/stack-lock.json").read_text(encoding="utf-8-sig"))
           for key in ("infra", "contracts", "harness"):
               commit = lock["repositories"][key]["commit"]
               if len(commit) != 40:
                   raise SystemExit(f"invalid {key} commit: {commit}")
+          print(f"contracts_sha={lock['repositories']['contracts']['commit']}")
+          print(f"harness_sha={lock['repositories']['harness']['commit']}")
           PY
-          {
-            echo "contracts_sha=${CONTRACTS_SHA}"
-            echo "harness_sha=${HARNESS_SHA}"
-          } >> "$GITHUB_OUTPUT"
 
       - name: Require cross-repo token for private checkouts
         run: |
