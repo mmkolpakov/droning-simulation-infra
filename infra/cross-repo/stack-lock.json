@@ -5,7 +5,7 @@
     "infra": {
       "url": "https://github.com/mmkolpakov/droning-simulation-infra",
       "ref": "foundation-ready-v0.2",
-      "commit": "dfaf5b03ca9152a76e5becd1ec326bf9be5cc82d"
+      "commit": "6d1fa9eda3488e713b0ba93d34bb8b26c85f9ada"
     },
     "contracts": {
       "url": "https://github.com/mmkolpakov/robotics-runtime-contracts",
