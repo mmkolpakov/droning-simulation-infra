@@ -32,6 +32,8 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     unzip \
     "ros-${ROS_DISTRO}-cv-bridge" \
     "ros-${ROS_DISTRO}-image-transport" \
+    "ros-${ROS_DISTRO}-launch-testing" \
+    "ros-${ROS_DISTRO}-launch-testing-ros" \
     "ros-${ROS_DISTRO}-mavlink" \
     "ros-${ROS_DISTRO}-mavros" \
     "ros-${ROS_DISTRO}-mavros-extras" \
@@ -46,6 +48,13 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     "ros-${ROS_DISTRO}-tf2-msgs" \
     "ros-${ROS_DISTRO}-vision-opencv" \
   && rm -rf /var/lib/apt/lists/*
+
+# `launch_testing`/`launch_testing_ros` ship as ROS packages above (real
+# Jazzy binaries, matching the rest of the stack's rosdep-managed
+# versioning); pytest itself is pinned explicitly to match
+# `requirements-dev.txt` so container-side test runs use the same pytest
+# release as host-side CI.
+RUN python3 -m pip install --no-cache-dir --break-system-packages "pytest==9.0.2"
 
 RUN curl --fail --location --show-error \
       "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWS_CLI_VERSION}.zip" \

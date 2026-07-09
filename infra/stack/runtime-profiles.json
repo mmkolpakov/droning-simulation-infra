@@ -507,17 +507,22 @@
           "components": [
             "rosbag2",
             "rosbag2_storage_mcap",
-            "evidence_manifest_json"
+            "junit_xml"
           ]
         },
         {
           "id": "machine_reports",
           "category": "evidence",
           "components": [
-            "manifest_json",
-            "metrics_json",
+            "junit_xml",
+            "junit_properties",
             "logs",
-            "sarif"
+            "sarif",
+            "slsa_provenance"
+          ],
+          "notes": [
+            "Numeric/categorical run metrics are recorded as <property> tags on the JUnit XML report (pytest record_property), not a separate metrics JSON file.",
+            "The signed evidence attestation is a SLSA Provenance document produced by slsa-framework/slsa-github-generator over the JUnit report and image digest, generated in CI (not a `make` target)."
           ]
         }
       ],
@@ -538,13 +543,17 @@
           "required": true
         },
         {
-          "id": "evidence_manifest",
-          "command": "make evidence-manifest",
-          "required": true
+          "id": "junit_report",
+          "command": "make integration-smoke joint-motion-smoke",
+          "required": true,
+          "notes": [
+            "Writes JUnit XML under artifacts/reports/; CI hashes it and calls slsa-framework/slsa-github-generator for the signed provenance attestation."
+          ]
         }
       ],
       "artifacts": [
-        "artifacts/reports/evidence-manifest.json",
+        "artifacts/reports/integration-smoke.xml",
+        "artifacts/reports/joint-motion-smoke.xml",
         "artifacts/reports/package-update-check.txt",
         "artifacts/security/trivy-image.sarif"
       ]
@@ -1103,9 +1112,9 @@
       "boundary": [
         "rosbag2_mcap",
         "logs",
-        "metrics_json",
-        "evidence_manifest_json",
-        "manifest_json",
+        "junit_xml",
+        "junit_properties",
+        "slsa_provenance",
         "sarif"
       ],
       "owner": "infrastructure"

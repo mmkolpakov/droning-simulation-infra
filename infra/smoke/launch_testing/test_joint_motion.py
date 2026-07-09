@@ -1,30 +1,32 @@
 #!/usr/bin/env python3
-"""Headless Gazebo joint motion smoke with structured metrics."""
+"""Headless Gazebo joint motion smoke.
+
+Metrics are recorded as `<property>` tags on the JUnit XML report via
+pytest's `record_property`, replacing the old bespoke
+`run-metrics.v1`-shaped JSON file (`SMOKE_JOINT_METRICS_PATH`).
+
+Run with:
+    source /etc/profile.d/robotics_ros_setup.sh
+    python3 -m pytest infra/smoke/launch_testing/test_joint_motion.py \
+        --junitxml=<report>.xml
+"""
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import subprocess
 import time
-from pathlib import Path
-
+from typing import Any
 
 ERROR_RE = re.compile(r"(error|failed|exception)", re.IGNORECASE)
 
 
-def main() -> int:
+def test_joint_motion_completes_without_errors(record_property: Any) -> None:
     world_path = os.environ.get(
         "SMOKE_JOINT_WORLD_PATH", "/workspace/infra/smoke/worlds/joint_motion.sdf"
     )
     iterations = int(os.environ.get("SMOKE_JOINT_ITERATIONS", "200"))
-    log_dir = Path(os.environ.get("SMOKE_LOG_DIR", "/tmp/robotics-smoke"))
-    metrics_path = Path(
-        os.environ.get("SMOKE_JOINT_METRICS_PATH", str(log_dir / "joint_motion_metrics.json"))
-    )
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / "joint_motion.log"
 
     started = time.monotonic()
     completed = subprocess.run(
@@ -41,22 +43,11 @@ def main() -> int:
         text=True,
     )
     duration_s = time.monotonic() - started
-    log_path.write_text(completed.stdout + completed.stderr, encoding="utf-8")
+    output = completed.stdout + completed.stderr
 
-    failed = completed.returncode != 0 or bool(ERROR_RE.search(completed.stdout + completed.stderr))
-    metrics = {
-        "iterations": iterations,
-        "duration_s": round(duration_s, 3),
-        "returncode": completed.returncode,
-        "result": "fail" if failed else "pass",
-    }
-    metrics_path.write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps(metrics))
-    if failed:
-        print(log_path.read_text(encoding="utf-8")[-2000:])
-        return 1
-    return 0
+    record_property("iterations", iterations)
+    record_property("duration_s", round(duration_s, 3))
+    record_property("returncode", completed.returncode)
 
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+    failed = completed.returncode != 0 or bool(ERROR_RE.search(output))
+    assert not failed, output[-2000:]

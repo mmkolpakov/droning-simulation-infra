@@ -46,6 +46,8 @@ jobs:
       actions: read
       contents: read
       security-events: write
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
@@ -66,7 +68,7 @@ jobs:
           IMAGE_TAG="robotics/ros-jazzy-simulation:ci" \
           RUN_ID="ci-${GITHUB_RUN_ID}" \
             make compose-build
-      - name: Smoke simulation image
+      - name: Smoke simulation image (pytest + JUnit XML)
         run: |
           IMAGE_TAG="robotics/ros-jazzy-simulation:ci" \
           RUN_ID="ci-${GITHUB_RUN_ID}" \
@@ -79,6 +81,8 @@ jobs:
               compose-autopilot-smoke
       - name: Parallel isolation smoke
         run: IMAGE_TAG="robotics/ros-jazzy-simulation:ci" RUN_ID="ci-${GITHUB_RUN_ID}-iso" make parallel-isolation-smoke
+      - name: pytest-docker service lifecycle smoke
+        run: IMAGE_TAG="robotics/ros-jazzy-simulation:ci" RUN_ID="ci-${GITHUB_RUN_ID}" make pytest-docker-smoke
       - name: Inspect local image metadata
         run: IMAGE_TAG="robotics/ros-jazzy-simulation:ci" RUN_ID="ci-${GITHUB_RUN_ID}" make docker-metadata
       - name: Check recorded package versions
@@ -96,11 +100,28 @@ jobs:
         run: IMAGE_TAG="robotics/ros-jazzy-simulation:ci" RUN_ID="ci-${GITHUB_RUN_ID}" make security-gate
       - name: Generate SBOM
         run: IMAGE_TAG="robotics/ros-jazzy-simulation:ci" RUN_ID="ci-${GITHUB_RUN_ID}" make sbom
-      - name: Generate evidence manifest
-        run: IMAGE_TAG="robotics/ros-jazzy-simulation:ci" RUN_ID="ci-${GITHUB_RUN_ID}" make evidence-manifest
+      - name: Hash JUnit reports for SLSA provenance
+        id: hash
+        run: |
+          set -euo pipefail
+          report_dir="runs/ci-${GITHUB_RUN_ID}/reports"
+          cd "${report_dir}"
+          echo "hashes=$(sha256sum integration-smoke.xml joint-motion-smoke.xml pytest-docker-smoke.xml | base64 -w0)" \
+            >> "${GITHUB_OUTPUT}"
       - name: Upload Docker reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: docker-reports
           path: runs/
+
+  provenance:
+    needs: [docker-smoke]
+    permissions:
+      actions: read  # Needed for detection of GitHub Actions environment.
+      id-token: write  # Needed for provenance signing.
+      contents: write  # Needed to upload provenance to a release, if any.
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: "${{ needs.docker-smoke.outputs.hashes }}"
+      provenance-name: ci.intoto.jsonl

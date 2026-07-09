@@ -37,6 +37,8 @@ jobs:
     timeout-minutes: 90
     env:
       CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
     steps:
       - name: Checkout infra
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -89,12 +91,29 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install contracts and harness
+      - name: Validate contracts package at pinned SHA
+        working-directory: deps/contracts
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install --disable-pip-version-check \
-            "./deps/contracts" \
-            "./deps/harness"
+          make sync-schemas
+          python -m pip install --disable-pip-version-check -e . -r requirements-dev.txt
+          make ci
+
+      - name: Validate harness plugin at pinned SHA
+        working-directory: deps/harness
+        run: |
+          python -m pip install --disable-pip-version-check -e . -r requirements-dev.txt
+          make validate lint test
+
+      - name: Install infra tools + the pinned harness plugin into .venv
+        run: |
+          set -euo pipefail
+          make bootstrap
+          # Installed into the *same* `.venv` `make pytest-docker-smoke`
+          # below runs in: proves the pinned harness execution-guard
+          # plugin loads cleanly alongside infra's pytest-docker fixtures,
+          # not just in harness's own isolated test run above.
+          .venv/bin/pip install --disable-pip-version-check --no-deps ./deps/harness
+          .venv/bin/python -c "from robotics_simulation_harness.guard import enforce_execution_guard; print('harness guard plugin importable:', enforce_execution_guard)"
 
       - name: Allocate run identity
         id: run
@@ -118,11 +137,6 @@ jobs:
           IMAGE_TAG="robotics/ros-jazzy-simulation:cross-repo" \
           RUN_ID="${{ steps.run.outputs.run_id }}" \
             make compose-build
-          # Evidence must record the digest of the image that was actually
-          # built and run for this scenario, not a hardcoded placeholder.
-          # This build is never pushed to a registry, so there is no
-          # RepoDigest; the local content-addressed image ID from the
-          # Docker daemon is the real, verifiable digest of what was built.
           digest="$(docker image inspect robotics/ros-jazzy-simulation:cross-repo --format '{{.Id}}')"
           if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "unexpected image id format: ${digest}" >&2
@@ -130,168 +144,71 @@ jobs:
           fi
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
-      - name: Validate contracts package
-        working-directory: deps/contracts
-        run: |
-          make sync-schemas
-          python -m pip install --disable-pip-version-check -r requirements-dev.txt
-          make ci
-
-      - name: Resolve and execute harness run against compose
+      - name: Run cross-repo graph readiness (launch_testing_ros)
         env:
           RUN_ID: ${{ steps.run.outputs.run_id }}
-          ROS_DOMAIN_ID: ${{ steps.run.outputs.ros_domain_id }}
           IMAGE_TAG: robotics/ros-jazzy-simulation:cross-repo
-          COMPOSE_PROJECT_NAME: robotics-${{ steps.run.outputs.run_id }}
-          FASTRTPS_DEFAULT_PROFILES_FILE: /workspace/runs/${{ steps.run.outputs.run_id }}/dds/fastdds-profile.xml
-          ROBOTICS_RUNS_ROOT: ${{ github.workspace }}/runs
-          ROBOTICS_STACK_LOCK_PATH: ${{ github.workspace }}/infra/cross-repo/stack-lock.json
-          # The compose launch plan itself enforces graph readiness live: a
-          # sibling `ros-observer` container performs a real `rclpy` check on
-          # the same bridge network, and `--exit-code-from ros-observer`
-          # makes the compose process's own exit code equal that outcome.
-          # This is intentionally NOT `ROBOTICS_SKIP_ROS_OBSERVER`, which
-          # would report `graph_ready` as skipped/failed instead of deriving
-          # it honestly from the embedded live check.
-          ROBOTICS_GRAPH_CHECK_EMBEDDED: "1"
-          ROBOTICS_CONTRACTS_SCHEMA_DIR: ${{ github.workspace }}/deps/contracts/schemas
-          # The `ros-observer` sidecar writes its live rclpy verdict to this
-          # path (via the bind-mounted `./runs:/workspace/runs` volume); the
-          # harness CLI reads it from disk instead of trusting
-          # `docker compose`'s exit code alone for `graph_ready`.
-          ROBOTICS_GRAPH_OBSERVED_PATH: >-
-            ${{ github.workspace }}/runs/${{ steps.run.outputs.run_id }}/cross-repo/graph-observed.json
-          # The image built above for this exact run, not a hardcoded
-          # placeholder: evidence must record what was actually tested.
-          ROBOTICS_INFRA_IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
-        run: |
-          set -euo pipefail
-          mkdir -p "runs/${RUN_ID}/cross-repo"
-          robotics-harness scenario resolve \
-            --composition infra/cross-repo/composition.yaml \
-            --output "runs/${RUN_ID}/cross-repo/resolved-scenario.json" \
-            --trace "runs/${RUN_ID}/cross-repo/resolution-trace.json"
-          python3 -c "
-          import json
-          from pathlib import Path
-          resolved = json.loads(Path('runs/${RUN_ID}/cross-repo/resolved-scenario.json').read_text(encoding='utf-8'))
-          out = Path('runs/${RUN_ID}/cross-repo/expected-graph.json')
-          out.write_text(json.dumps(resolved['expected_ros_graph'], indent=2) + chr(10), encoding='utf-8')
-          "
-          robotics-harness run \
-            --scenario "runs/${RUN_ID}/cross-repo/resolved-scenario.json" \
-            --evidence "runs/${RUN_ID}/evidence-manifest.json" \
-            --run-id "${RUN_ID}"
-          ROS_DOMAIN_ID="${ROS_DOMAIN_ID}" COMPOSE_PROJECT_NAME="robotics-${RUN_ID}" \
-            docker compose -f compose.yaml down --remove-orphans || true
+        run: make RUN_ID="${RUN_ID}" cross-repo-graph-smoke
 
-      - name: Assert evidence
+      - name: Run integration + joint-motion smokes
         env:
           RUN_ID: ${{ steps.run.outputs.run_id }}
-          ROS_DOMAIN_ID: ${{ steps.run.outputs.ros_domain_id }}
-          EXPECTED_IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
-        run: |
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-          evidence_path = Path(f"runs/{os.environ['RUN_ID']}/evidence-manifest.json")
-          data = json.loads(evidence_path.read_text(encoding="utf-8"))
-          assert data["result"] == "pass", data
-          assert int(data["ros_domain_id"]) == int(os.environ["ROS_DOMAIN_ID"]), data
-          executed = any(
-              c.get("name") == "process_execution" and c.get("result") == "executed"
-              for c in data["checks"]
-          )
-          assert executed, data["checks"]
-          graph_ready = any(
-              c.get("name") == "graph_ready" and c.get("result") == "pass"
-              for c in data["checks"]
-          )
-          assert graph_ready, data["checks"]
-          # Must be the digest of the image actually built for this run, not
-          # the harness's old hardcoded placeholder default.
-          assert data["infra_image_digest"] == os.environ["EXPECTED_IMAGE_DIGEST"], data
-          # infra is the orchestrating ("business") repo for this run;
-          # contracts/harness SHAs it tested are already pinned in
-          # stack_lock_sha256/contracts_version/harness_version.
-          assert data["business_repo"] is not None, data
-          assert data["business_repo"]["commit"] == os.environ["GITHUB_SHA"], data
-          graph_artifact = next(
-              (a for a in data["artifacts"] if a["name"] == "graph-observed"), None
-          )
-          assert graph_artifact is not None, data["artifacts"]
-          print("evidence ok:", evidence_path)
-          PY
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-          observed_path = Path(f"runs/{os.environ['RUN_ID']}/cross-repo/graph-observed.json")
-          observed = json.loads(observed_path.read_text(encoding="utf-8"))
-          assert observed["ok"] is True, observed
-          assert "/clock" in observed["observed"]["topics"], observed
-          assert observed["observed"]["topics"]["/clock"]["publishers"] >= 1, observed
-          print("live ros-observer result ok:", observed_path)
-          PY
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-          from jsonschema import Draft202012Validator
-          from referencing import Registry, Resource
-          from referencing.jsonschema import DRAFT202012
+          IMAGE_TAG: robotics/ros-jazzy-simulation:cross-repo
+        run: make RUN_ID="${RUN_ID}" integration-smoke joint-motion-smoke
 
-          schema_dir = Path("deps/contracts/schemas")
-          resources = []
-          for path in schema_dir.glob("*.schema.json"):
-              schema = json.loads(path.read_text(encoding="utf-8"))
-              resources.append((schema["$id"], Resource.from_contents(schema, default_specification=DRAFT202012)))
-          registry = Registry().with_resources(resources)
-          evidence_schema = json.loads(
-              (schema_dir / "evidence-manifest.v1.schema.json").read_text(encoding="utf-8")
-          )
-          evidence = json.loads(
-              Path(f"runs/{os.environ['RUN_ID']}/evidence-manifest.json").read_text(encoding="utf-8")
-          )
-          Draft202012Validator(evidence_schema, registry=registry).validate(evidence)
-          print("evidence schema ok")
-          PY
+      - name: Run pytest-docker suite with the pinned harness plugin loaded
+        env:
+          RUN_ID: ${{ steps.run.outputs.run_id }}
+          IMAGE_TAG: robotics/ros-jazzy-simulation:cross-repo
+        run: make RUN_ID="${RUN_ID}" pytest-docker-smoke
 
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22  # v4.1.0
-
-      - name: Sign evidence with Cosign keyless
+      - name: Assert JUnit reports recorded a real pass
         env:
           RUN_ID: ${{ steps.run.outputs.run_id }}
         run: |
           set -euo pipefail
-          EVIDENCE="runs/${RUN_ID}/evidence-manifest.json"
           python3 - <<'PY'
-          import json
           import os
+          import xml.etree.ElementTree as ET
           from pathlib import Path
-          path = Path(f"runs/{os.environ['RUN_ID']}/evidence-manifest.json")
-          data = json.loads(path.read_text(encoding="utf-8"))
-          data["signed"] = True
-          data["signer_identity"] = (
-              f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/"
-              ".github/workflows/cross-repo-integration.yml"
-          )
-          path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+          run_id = os.environ["RUN_ID"]
+          report_dir = Path("runs") / run_id / "reports"
+          reports = [
+              "cross-repo-graph-ready.xml",
+              "integration-smoke.xml",
+              "joint-motion-smoke.xml",
+              "pytest-docker-smoke.xml",
+          ]
+          for name in reports:
+              path = report_dir / name
+              root = ET.fromstring(path.read_text(encoding="utf-8"))
+              suite = root if root.tag == "testsuite" else root.find("testsuite")
+              failures = int(suite.get("failures", "0"))
+              errors = int(suite.get("errors", "0"))
+              tests = int(suite.get("tests", "0"))
+              assert tests > 0, f"{name}: no tests recorded"
+              assert failures == 0 and errors == 0, f"{name}: failures={failures} errors={errors}"
+              print(f"{name}: ok ({tests} tests)")
           PY
-          cosign sign-blob --yes \
-            --bundle "runs/${RUN_ID}/evidence-manifest.sigstore.json" \
-            --output-signature "${EVIDENCE}.sig" \
-            --output-certificate "${EVIDENCE}.pem" \
-            "${EVIDENCE}"
-          cosign verify-blob \
-            --bundle "runs/${RUN_ID}/evidence-manifest.sigstore.json" \
-            --certificate-identity-regexp \
-              "https://github.com/${{ github.repository }}/.github/workflows/cross-repo-integration.yml@.*" \
-            --certificate-oidc-issuer \
-              "https://token.actions.githubusercontent.com" \
-            "${EVIDENCE}"
+
+      - name: Hash JUnit reports + image digest for SLSA provenance
+        id: hash
+        env:
+          RUN_ID: ${{ steps.run.outputs.run_id }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          report_dir="runs/${RUN_ID}/reports"
+          echo "${IMAGE_DIGEST}" > "${report_dir}/image-digest.txt"
+          cd "${report_dir}"
+          echo "hashes=$(sha256sum \
+            cross-repo-graph-ready.xml \
+            integration-smoke.xml \
+            joint-motion-smoke.xml \
+            pytest-docker-smoke.xml \
+            image-digest.txt \
+            | base64 -w0)" >> "${GITHUB_OUTPUT}"
 
       - name: Upload cross-repo artifacts
         if: always()
@@ -299,3 +216,14 @@ jobs:
         with:
           name: cross-repo-runs
           path: runs/
+
+  provenance:
+    needs: [integrate]
+    permissions:
+      actions: read  # Needed for detection of GitHub Actions environment.
+      id-token: write  # Needed for provenance signing.
+      contents: write  # Needed to upload provenance to a release, if any.
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: "${{ needs.integrate.outputs.hashes }}"
+      provenance-name: cross-repo.intoto.jsonl

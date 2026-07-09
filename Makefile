@@ -54,10 +54,6 @@ STACK_MANIFEST := infra/stack/simulation-stack.json
 STACK_SCHEMA := contracts/infra/stack.v1.schema.json
 RUNTIME_PROFILES := infra/stack/runtime-profiles.json
 RUNTIME_PROFILES_SCHEMA := contracts/infra/runtime-profiles.v1.schema.json
-EVIDENCE_MANIFEST_EXAMPLE := infra/stack/evidence-manifest.example.json
-EVIDENCE_MANIFEST_SCHEMA := contracts/infra/evidence-manifest.v1.schema.json
-EVIDENCE_MANIFEST_FILTER := infra/stack/evidence-manifest.jq
-EVIDENCE_MANIFEST := $(REPORT_DIR)/evidence-manifest.json
 INFRA_RELEASE := infra/stack/infra-release.json
 INFRA_RELEASE_SCHEMA := contracts/infra/infra-release.v1.schema.json
 DOCKERFILE := infra/docker/ros-jazzy-mavros-gazebo.Dockerfile
@@ -67,10 +63,10 @@ DOCKERFILES := $(DOCKERFILE) infra/docker/accelerated-inference.Dockerfile infra
 	dev-up dev-shell dev-logs dev-ps dev-down \
 	docker-manifests docker-pull bake-build compose-build compose-smoke compose-autopilot-smoke compose-ardupilot-smoke \
 	compose-px4-smoke compose-dds-smoke compose-comms-smoke compose-media-smoke compose-diagnostics-smoke \
-	compose-sensor-smoke compose-artifact-tooling-smoke integration-smoke joint-motion-smoke \
+	compose-sensor-smoke compose-artifact-tooling-smoke integration-smoke joint-motion-smoke cross-repo-graph-smoke \
 	compose-gpu-smoke compose-accelerated-inference-smoke \
 	compose-render-smoke compose-edge-config optional-smoke docker-metadata docker-update-check \
-	evidence-manifest sbom security-scan security-gate pre-commit ci clean allocate-run prepare-run parallel-isolation-smoke unit-tests
+	pytest-docker-smoke sbom security-scan security-gate pre-commit ci clean allocate-run prepare-run parallel-isolation-smoke unit-tests
 
 
 allocate-run:
@@ -86,6 +82,17 @@ prepare-run: allocate-run
 
 unit-tests:
 	"$(VENV_PYTHON)" -m pytest tests/test_check_apt_versions.py tests/test_allocate_domain_id.py -q
+
+# Reuses the image `compose-build` already built earlier in the same CI
+# job/`make ci` run (`--no-build` in `docker_setup`, see
+# tests/test_compose_services.py); build it first if running this alone.
+pytest-docker-smoke: bootstrap prepare-run
+	mkdir -p "$(REPORT_DIR)"
+	IMAGE_TAG="$(IMAGE_TAG)" \
+	ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" \
+	FASTRTPS_DEFAULT_PROFILES_FILE="$(CURDIR)/$(RUNS_ROOT)/$(RUN_ID)/dds/fastdds-profile.xml" \
+		"$(VENV_PYTHON)" -m pytest tests/test_compose_services.py \
+		--junitxml="$(REPORT_DIR)/pytest-docker-smoke.xml" -q
 
 help:
 	@printf '%s\n' \
@@ -121,7 +128,6 @@ validate-json: bootstrap
 	"$(CHECK_JSONSCHEMA)" --schemafile "$(STACK_SCHEMA)" "$(STACK_MANIFEST)"
 	"$(CHECK_JSONSCHEMA)" --schemafile "$(INFRA_RELEASE_SCHEMA)" "$(INFRA_RELEASE)"
 	"$(CHECK_JSONSCHEMA)" --schemafile "$(RUNTIME_PROFILES_SCHEMA)" "$(RUNTIME_PROFILES)"
-	"$(CHECK_JSONSCHEMA)" --schemafile "$(EVIDENCE_MANIFEST_SCHEMA)" "$(EVIDENCE_MANIFEST_EXAMPLE)"
 	"$(VENV_PYTHON)" -m json.tool .devcontainer/devcontainer.json > "$(REPORT_DIR)/devcontainer.json"
 	"$(VENV_PYTHON)" -m json.tool "$(STACK_MANIFEST)" > "$(REPORT_DIR)/simulation-stack.json"
 	"$(VENV_PYTHON)" -m json.tool "$(STACK_SCHEMA)" > "$(REPORT_DIR)/stack.v1.schema.json"
@@ -129,8 +135,6 @@ validate-json: bootstrap
 	"$(VENV_PYTHON)" -m json.tool "$(INFRA_RELEASE_SCHEMA)" > "$(REPORT_DIR)/infra-release.v1.schema.json"
 	"$(VENV_PYTHON)" -m json.tool "$(RUNTIME_PROFILES)" > "$(REPORT_DIR)/runtime-profiles.json"
 	"$(VENV_PYTHON)" -m json.tool "$(RUNTIME_PROFILES_SCHEMA)" > "$(REPORT_DIR)/runtime-profiles.v1.schema.json"
-	"$(VENV_PYTHON)" -m json.tool "$(EVIDENCE_MANIFEST_EXAMPLE)" > "$(REPORT_DIR)/evidence-manifest.example.json"
-	"$(VENV_PYTHON)" -m json.tool "$(EVIDENCE_MANIFEST_SCHEMA)" > "$(REPORT_DIR)/evidence-manifest.v1.schema.json"
 
 validate-yaml: bootstrap
 	"$(YAMLLINT)" .github .yamllint.yml "$(COMPOSE_FILE)" compose.override.yaml.example config
@@ -191,7 +195,7 @@ profiles:
 		"$(RUNTIME_PROFILES)" | tee "$(REPORT_DIR)/runtime-profiles.tsv"
 
 review: validate lint profiles compose-build compose-smoke compose-sensor-smoke compose-artifact-tooling-smoke integration-smoke joint-motion-smoke \
-	compose-autopilot-smoke docker-metadata security-scan security-gate sbom evidence-manifest
+	cross-repo-graph-smoke pytest-docker-smoke compose-autopilot-smoke docker-metadata security-scan security-gate sbom
 
 docker-manifests:
 	mkdir -p "$(REPORT_DIR)"
@@ -389,9 +393,8 @@ integration-smoke: prepare-run
 	rc=0; \
 	IMAGE_TAG="$(IMAGE_TAG)" ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" FASTRTPS_DEFAULT_PROFILES_FILE="/workspace/runs/$(RUN_ID)/dds/fastdds-profile.xml" \
 		$(COMPOSE) -f "$(COMPOSE_FILE)" run --rm --no-deps \
-		-e SMOKE_LOG_DIR=/workspace/runs/$(RUN_ID)/smoke \
 		simulation \
-		python3 /workspace/infra/smoke/launch_testing/test_integration.py \
+		bash -lc 'source /etc/profile.d/robotics_ros_setup.sh && python3 -m pytest /workspace/infra/smoke/launch_testing/test_integration.py --junitxml=/workspace/runs/$(RUN_ID)/reports/integration-smoke.xml' \
 		2>&1 | tee "$(REPORT_DIR)/integration-smoke.txt" || rc=$$?; \
 	ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" $(COMPOSE) -f "$(COMPOSE_FILE)" -p "robotics-$(RUN_ID)" down --remove-orphans || true; \
 	exit $$rc
@@ -401,11 +404,26 @@ joint-motion-smoke: prepare-run
 	rc=0; \
 	IMAGE_TAG="$(IMAGE_TAG)" ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" FASTRTPS_DEFAULT_PROFILES_FILE="/workspace/runs/$(RUN_ID)/dds/fastdds-profile.xml" \
 		$(COMPOSE) -f "$(COMPOSE_FILE)" run --rm --no-deps \
-		-e SMOKE_LOG_DIR=/workspace/runs/$(RUN_ID)/smoke \
-		-e SMOKE_JOINT_METRICS_PATH=/workspace/runs/$(RUN_ID)/reports/joint_motion_metrics.json \
 		simulation \
-		python3 /workspace/infra/smoke/launch_testing/test_joint_motion.py \
+		bash -lc 'source /etc/profile.d/robotics_ros_setup.sh && python3 -m pytest /workspace/infra/smoke/launch_testing/test_joint_motion.py --junitxml=/workspace/runs/$(RUN_ID)/reports/joint-motion-smoke.xml' \
 		2>&1 | tee "$(REPORT_DIR)/joint-motion-smoke.txt" || rc=$$?; \
+	ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" $(COMPOSE) -f "$(COMPOSE_FILE)" -p "robotics-$(RUN_ID)" down --remove-orphans || true; \
+	exit $$rc
+
+# Cross-repo graph readiness: the live rclpy check now lives in
+# `infra/smoke/launch_testing/test_cross_repo_graph_ready.py`
+# (`launch_testing_ros.WaitForTopics`), replacing the old bespoke
+# `ros_graph_observer.py` sidecar. `cross-repo-simulation` keeps `gz sim`
+# and the ROS-Gazebo clock bridge running; `ros-observer` performs the
+# live check on the same bridge network and its exit code (from pytest)
+# is what `--exit-code-from` propagates.
+cross-repo-graph-smoke: prepare-run
+	mkdir -p "$(REPORT_DIR)"
+	rc=0; \
+	IMAGE_TAG="$(IMAGE_TAG)" ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" FASTRTPS_DEFAULT_PROFILES_FILE="/workspace/runs/$(RUN_ID)/dds/fastdds-profile.xml" \
+		$(COMPOSE) -f "$(COMPOSE_FILE)" up --abort-on-container-exit --exit-code-from ros-observer \
+		cross-repo-simulation ros-observer \
+		2>&1 | tee "$(REPORT_DIR)/cross-repo-graph-smoke.txt" || rc=$$?; \
 	ROS_DOMAIN_ID="$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" COMPOSE_PROJECT_NAME="robotics-$(RUN_ID)" $(COMPOSE) -f "$(COMPOSE_FILE)" -p "robotics-$(RUN_ID)" down --remove-orphans || true; \
 	exit $$rc
 
@@ -459,30 +477,6 @@ optional-smoke: compose-render-smoke compose-px4-smoke compose-dds-smoke compose
 docker-metadata:
 	mkdir -p "$(REPORT_DIR)"
 	docker image inspect "$(IMAGE_TAG)" > "$(REPORT_DIR)/docker-image-inspect.json"
-
-evidence-manifest: bootstrap prepare-run
-	mkdir -p "$(REPORT_DIR)"
-	if [[ ! -s "$(REPORT_DIR)/compose-smoke.txt" ]]; then echo "Missing $(REPORT_DIR)/compose-smoke.txt" >&2; exit 1; fi
-	if [[ ! -s "$(REPORT_DIR)/compose-sensor-smoke.txt" ]]; then echo "Missing $(REPORT_DIR)/compose-sensor-smoke.txt" >&2; exit 1; fi
-	if [[ ! -s "$(REPORT_DIR)/compose-artifact-tooling-smoke.txt" ]]; then echo "Missing $(REPORT_DIR)/compose-artifact-tooling-smoke.txt" >&2; exit 1; fi
-	if [[ ! -s "$(REPORT_DIR)/integration-smoke.txt" ]]; then echo "Missing $(REPORT_DIR)/integration-smoke.txt" >&2; exit 1; fi
-	if [[ ! -s "$(REPORT_DIR)/joint-motion-smoke.txt" ]]; then echo "Missing $(REPORT_DIR)/joint-motion-smoke.txt" >&2; exit 1; fi
-	if [[ ! -s "$(REPORT_DIR)/compose-autopilot-smoke.txt" ]]; then echo "Missing $(REPORT_DIR)/compose-autopilot-smoke.txt" >&2; exit 1; fi
-	if [[ ! -s "$(REPORT_DIR)/docker-image-inspect.json" ]]; then echo "Missing $(REPORT_DIR)/docker-image-inspect.json" >&2; exit 1; fi
-	if [[ ! -s "$(SECURITY_DIR)/trivy-gate.txt" ]]; then echo "Missing $(SECURITY_DIR)/trivy-gate.txt" >&2; exit 1; fi
-	image_digest="$$(jq -r '.[0].RepoDigests[0] // empty' "$(REPORT_DIR)/docker-image-inspect.json")"; \
-	source_ref="$$(jq -r '.[0].Config.Labels["org.opencontainers.image.revision"] // empty' "$(REPORT_DIR)/docker-image-inspect.json")"; \
-	sarif_result="$$(if [[ -s "$(SECURITY_DIR)/trivy-image.sarif" ]]; then echo pass; else echo not_run; fi)"; \
-	jq -n \
-		--arg created_at "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-		--arg run_id "$(RUN_ID)" \
-		--argjson ros_domain_id "$$(cat $(RUNS_ROOT)/$(RUN_ID)/ros_domain_id.txt)" \
-		--arg image "$(IMAGE_TAG)" \
-		--arg image_digest "$${image_digest}" \
-		--arg source_ref "$${source_ref}" \
-		--arg sarif_result "$${sarif_result}" \
-		-f "$(EVIDENCE_MANIFEST_FILTER)" > "$(EVIDENCE_MANIFEST)"
-	"$(CHECK_JSONSCHEMA)" --schemafile "$(EVIDENCE_MANIFEST_SCHEMA)" "$(EVIDENCE_MANIFEST)"
 
 docker-update-check: prepare-run
 	mkdir -p "$(REPORT_DIR)"
@@ -571,7 +565,7 @@ parallel-isolation-smoke:
 	@test "$$(cat $(RUNS_ROOT)/$(RUN_ID)-a/ros_domain_id.txt)" != "$$(cat $(RUNS_ROOT)/$(RUN_ID)-b/ros_domain_id.txt)"
 
 ci: validate lint docker-manifests compose-build compose-smoke compose-sensor-smoke compose-artifact-tooling-smoke compose-autopilot-smoke docker-metadata \
-	integration-smoke joint-motion-smoke docker-update-check security-scan security-gate sbom evidence-manifest
+	integration-smoke joint-motion-smoke cross-repo-graph-smoke pytest-docker-smoke docker-update-check security-scan security-gate sbom
 
 pre-commit: bootstrap
 	"$(PRE_COMMIT)" run --all-files
