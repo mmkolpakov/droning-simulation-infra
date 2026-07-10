@@ -25,7 +25,6 @@ services:
 
   test:
     <<: *runtime
-    user: "0:0"
     profiles:
       - test
     command:
@@ -45,5 +44,3 @@ services:
       GZ_PARTITION: "${GZ_TEST_PARTITION:-robotics-simulation-test}"
     healthcheck:
       disable: true
-    volumes:
-      - ./artifacts/test-results:/opt/robotics_ws/build/robotics_simulation_infra/test_results

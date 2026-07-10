@@ -41,7 +41,8 @@ RUN source "/opt/ros/${ROS_DISTRO}/setup.bash" \
     && colcon build \
       --merge-install \
       --event-handlers console_direct+ \
-      --cmake-args -DBUILD_TESTING=ON
+      --cmake-args -DBUILD_TESTING=ON \
+    && chown -R ubuntu:ubuntu build log
 
 COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/robotics-entrypoint
 

@@ -37,7 +37,6 @@ jobs:
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
         with:
           version: "0.11.28"
-          enable-cache: true
       - name: Run repository hooks
         run: uvx --from pre-commit==4.6.0 pre-commit run --all-files --show-diff-on-failure
       - name: Validate Compose model
@@ -95,7 +94,19 @@ jobs:
           docker compose exec -T simulation \
             robotics-entrypoint timeout 10 ros2 topic echo /clock --once
       - name: Run ROS and Gazebo acceptance tests
-        run: docker compose --profile test run --rm --no-deps test
+        run: |
+          test_container="${COMPOSE_PROJECT_NAME}-test"
+          docker rm --force "$test_container" >/dev/null 2>&1 || true
+          set +e
+          docker compose run --name "$test_container" --no-deps test
+          status=$?
+          set -e
+          mkdir -p artifacts/test-results
+          docker cp \
+            "${test_container}:/opt/robotics_ws/build/robotics_simulation_infra/test_results/." \
+            artifacts/test-results/
+          docker rm "$test_container"
+          exit "$status"
       - name: Capture runtime evidence
         if: always()
         run: |
