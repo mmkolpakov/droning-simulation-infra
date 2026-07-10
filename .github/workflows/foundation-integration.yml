@@ -49,6 +49,7 @@ jobs:
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
         with:
           version: "0.11.28"
+          enable-cache: false
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4.2.0
       - name: Import exact foundation sources
         run: |
@@ -94,10 +95,7 @@ jobs:
       - name: Run scenario against the real ROS graph
         run: |
           project="foundation-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          cleanup() {
-            docker compose -p "$project" --profile test down --volumes --remove-orphans || true
-          }
-          trap cleanup EXIT
+          trap 'docker compose -p "$project" --profile test down --volumes --remove-orphans || true' EXIT
           docker compose -p "$project" up --detach --no-build --wait --wait-timeout 120
           docker compose -p "$project" exec -T simulation \
             robotics-entrypoint timeout 20 ros2 topic echo /clock --once
@@ -116,11 +114,10 @@ jobs:
         run: |
           project_a="foundation-a-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           project_b="foundation-b-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          cleanup() {
+          trap '
             docker compose -p "$project_a" down --volumes --remove-orphans || true
             docker compose -p "$project_b" down --volumes --remove-orphans || true
-          }
-          trap cleanup EXIT
+          ' EXIT
           ROS_DOMAIN_ID=41 GZ_PARTITION="${project_a}" \
             docker compose -p "$project_a" up --detach --no-build --wait --wait-timeout 120
           ROS_DOMAIN_ID=42 GZ_PARTITION="${project_b}" \
