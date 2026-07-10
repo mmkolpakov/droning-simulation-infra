@@ -6,27 +6,32 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 .venv/
+.trivy-cache/
 venv/
 env/
 
 # Environment files
 .env
 .env.*
-!.env.example
 *.pem
 *.key
 *.crt
 
 # Runtime outputs
 logs/
+/build/
+/install/
+/log/
+/dependencies/
 runs/
 artifacts/
 tmp/
+.ros/
 *.log
+*.mcap
+*.db3
 *.sqlite
 *.db
-compose.override.yaml
-!compose.override.yaml.example
 
 # Editor files
 .idea/
