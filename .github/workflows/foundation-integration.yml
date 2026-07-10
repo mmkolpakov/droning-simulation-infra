@@ -5,6 +5,14 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "17 4 * * 1"
+  pull_request:
+    paths:
+      - ".github/workflows/foundation-integration.yml"
+      - "Dockerfile"
+      - "compose.yaml"
+      - "foundation.repos"
+      - "foundation/**"
+      - "ros_ws/**"
   push:
     branches:
       - main
