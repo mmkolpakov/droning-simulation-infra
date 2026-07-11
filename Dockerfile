@@ -6,7 +6,7 @@ ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.11.28@sha256:0f36cb9361a3346885ca3677e376701
 ARG UBUNTU_BASE_IMAGE=ubuntu:24.04@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90
 ARG RCLONE_IMAGE=rclone/rclone:1.74.4@sha256:c61954aaa32328a5486715dd063a81c7879f5195ad3505cd362deddd509dc4a1
 ARG AWS_CLI_IMAGE=public.ecr.aws/aws-cli/aws-cli:2.35.21@sha256:238583846e731f31c9848dae26c5a560769ff35c4c5368a4cb6be5816683e485
-ARG YQ_IMAGE=mikefarah/yq:4.49.2@sha256:224eec1bdaf4903221117d65dd95a0f4f4a6d4e46c88e2c81e09398d1f2753a1
+ARG GO_BUILDER_IMAGE=golang:1.26.5@sha256:079e59808d2d252516e27e3f3a9c003740dee7f75e55aa71528766d52bcfc16a
 ARG UBUNTU_SNAPSHOT=20260701T000000Z
 ARG ROS_SNAPSHOT=2026-06-18
 ARG ROSDISTRO_INDEX_REVISION=9f76014b84955f757306270d6860fa3bc1c30b57
@@ -14,7 +14,34 @@ ARG ROSDISTRO_INDEX_REVISION=9f76014b84955f757306270d6860fa3bc1c30b57
 FROM ${UV_IMAGE} AS uv
 FROM ${RCLONE_IMAGE} AS rclone
 FROM ${AWS_CLI_IMAGE} AS aws-cli
-FROM ${YQ_IMAGE} AS yq
+
+# Rebuild the exact yq release source with the patched Go toolchain. The
+# upstream release binary was built with a Go standard library below 1.26.5.
+FROM --platform=${BUILDPLATFORM} ${GO_BUILDER_IMAGE} AS yq
+ARG TARGETOS
+ARG TARGETARCH
+ARG YQ_REVISION=1b9b4ac5187171d2e5e3129be0cfa827c7f9d53d
+ARG YQ_VERSION=v4.53.3
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    YQ_MODULE="github.com/mikefarah/yq/v4"; \
+    YQ_MODULE_VERSION="$(go list -m -f '{{.Version}}' \
+      "${YQ_MODULE}@${YQ_REVISION}")"; \
+    go mod download "${YQ_MODULE}@${YQ_MODULE_VERSION}"; \
+    YQ_SOURCE="$(go list -m -f '{{.Dir}}' \
+      "${YQ_MODULE}@${YQ_MODULE_VERSION}")"; \
+    go -C "${YQ_SOURCE}" mod download; \
+    go -C "${YQ_SOURCE}" mod verify; \
+    CGO_ENABLED=0 \
+      GOOS="${TARGETOS}" \
+      GOARCH="${TARGETARCH}" \
+      go -C "${YQ_SOURCE}" build \
+      -trimpath \
+      -ldflags "-s -w \
+        -X github.com/mikefarah/yq/v4/cmd.GitCommit=${YQ_REVISION} \
+        -X github.com/mikefarah/yq/v4/cmd.GitDescribe=${YQ_VERSION}" \
+      -o /out/yq \
+      .
 
 FROM ${UBUNTU_BASE_IMAGE} AS ubuntu-ca-amd64
 ADD --checksum=sha256:e3b33fefcebc3ef8f3367572a1ffead2e8ddf7807aec1d442b843e50b70261f4 \
@@ -151,7 +178,7 @@ RUN UBUNTU_SNAPSHOT="${UBUNTU_SNAPSHOT}" \
 
 COPY --from=mcap /mcap /usr/local/bin/mcap
 COPY --from=rclone /usr/local/bin/rclone /usr/local/bin/rclone
-COPY --from=yq /usr/bin/yq /usr/local/bin/yq
+COPY --from=yq /out/yq /usr/local/bin/yq
 COPY --from=aws-cli /usr/local/aws-cli /usr/local/aws-cli
 RUN ln -s /usr/local/aws-cli/v2/current/bin/aws /usr/local/bin/aws
 

@@ -386,13 +386,14 @@ jobs:
             docker run --rm
             --volume /var/run/docker.sock:/var/run/docker.sock
             --volume "${PWD}:/work:ro"
+            --volume "${PWD}/artifacts/security:/reports"
             --volume "${PWD}/.trivy-cache:/root/.cache/trivy"
             "${TRIVY_IMAGE}" image
             --config /work/trivy.yaml
             --ignorefile /work/.trivyignore
           )
           "${trivy[@]}" \
-            --format sarif --output /work/artifacts/security/simulation.sarif \
+            --format sarif --output /reports/simulation.sarif \
             "${SIMULATION_IMAGE}"
           for image in \
             "${SIMULATION_IMAGE}" "${EDGE_IMAGE}" "${SENSOR_IMAGE}" \
