@@ -372,8 +372,12 @@ jobs:
             "${INFERENCE_CPU_IMAGE}" "${OBSERVER_IMAGE}" \
             "${BENCHMARK_IMAGE}" "${EVIDENCE_IMAGE}"; do
             safe_name="$(tr '/:' '__' <<<"${image}")"
-            docker image inspect "${image}" \
-              > "artifacts/runtime/${safe_name}.json"
+            if ! docker image inspect "${image}" \
+              > "artifacts/runtime/${safe_name}.json"; then
+              rm -f "artifacts/runtime/${safe_name}.json"
+              printf '%s\n' "${image}" \
+                >> artifacts/runtime/missing-images.txt
+            fi
           done
       - name: Scan images and enforce vulnerability policy
         run: |
