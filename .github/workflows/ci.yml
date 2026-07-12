@@ -212,7 +212,8 @@ jobs:
         run: |
           docker compose up --detach --no-build --wait --wait-timeout 120 simulation
           docker compose exec -T simulation \
-            robotics-entrypoint timeout 20 ros2 topic echo /clock --once
+            robotics-entrypoint timeout 20 ros2 topic echo \
+            /clock rosgraph_msgs/msg/Clock --once
           test_container="${COMPOSE_PROJECT_NAME}-test"
           set +e
           docker compose --profile test run \
