@@ -7,6 +7,7 @@ ARG UBUNTU_BASE_IMAGE=ubuntu:24.04@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0a
 ARG RCLONE_IMAGE=rclone/rclone:1.74.4@sha256:c61954aaa32328a5486715dd063a81c7879f5195ad3505cd362deddd509dc4a1
 ARG AWS_CLI_IMAGE=public.ecr.aws/aws-cli/aws-cli:2.35.21@sha256:238583846e731f31c9848dae26c5a560769ff35c4c5368a4cb6be5816683e485
 ARG GO_BUILDER_IMAGE=golang:1.26.5@sha256:079e59808d2d252516e27e3f3a9c003740dee7f75e55aa71528766d52bcfc16a
+ARG NVIDIA_CUDA_BASE_IMAGE=nvidia/cuda:13.0.2-cudnn-runtime-ubuntu24.04@sha256:14d94b039cb94bbd5da559f303b46bc4b0d5d6c24ab1a9d7b186e566ed3400dc
 ARG UBUNTU_SNAPSHOT=20260701T000000Z
 ARG ROS_SNAPSHOT=2026-06-18
 ARG ROSDISTRO_INDEX_REVISION=9f76014b84955f757306270d6860fa3bc1c30b57
@@ -14,6 +15,7 @@ ARG ROSDISTRO_INDEX_REVISION=9f76014b84955f757306270d6860fa3bc1c30b57
 FROM ${UV_IMAGE} AS uv
 FROM ${RCLONE_IMAGE} AS rclone
 FROM ${AWS_CLI_IMAGE} AS aws-cli
+FROM ${NVIDIA_CUDA_BASE_IMAGE} AS nvidia-cuda-runtime
 
 # Rebuild the exact yq release source with the patched Go toolchain. The
 # upstream release binary was built with a Go standard library below 1.26.5.
@@ -356,6 +358,72 @@ ENV ROBOTICS_EXPECTED_PROVIDER=CPUExecutionProvider \
 
 LABEL org.opencontainers.image.title="Robotics CPU provider conformance" \
       org.opencontainers.image.description="Release gate for ONNX Runtime provider identity, fallback, and tensor parity."
+
+USER ubuntu
+WORKDIR /opt/provider-conformance
+
+ENTRYPOINT ["python3", "-m", "pytest"]
+CMD ["-q", "-p", "no:cacheprovider", "--junitxml=/reports/provider-conformance.junit.xml", "test_provider.py"]
+
+HEALTHCHECK NONE
+
+FROM edge-runtime AS inference-nvidia
+
+USER root
+COPY --from=uv /uv /uvx /usr/local/bin/
+COPY --from=nvidia-cuda-runtime /usr/local/cuda-13.0 /usr/local/cuda-13.0
+COPY --from=nvidia-cuda-runtime /usr/lib/x86_64-linux-gnu/libcudnn*.so* /usr/lib/x86_64-linux-gnu/
+COPY docker/python/inference-nvidia.lock /tmp/python/inference-nvidia.lock
+
+RUN ln -s /usr/local/cuda-13.0 /usr/local/cuda \
+    && uv venv --python /usr/bin/python3 --system-site-packages /opt/venv \
+    && uv pip install \
+      --python /opt/venv/bin/python \
+      --require-hashes \
+      --no-cache \
+      --no-deps \
+      --requirement /tmp/python/inference-nvidia.lock \
+    && uv pip freeze --python /opt/venv/bin/python \
+      > /usr/share/robotics-runtime/python-packages.txt \
+    && rm -rf /tmp/python
+
+ENV CUDA_HOME=/usr/local/cuda \
+    CUDA_VERSION=13.0.2 \
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    NVIDIA_REQUIRE_CUDA="cuda>=13.0" \
+    PATH="/opt/venv/bin:/usr/local/cuda/bin:${PATH}"
+
+LABEL org.opencontainers.image.title="Robotics NVIDIA inference runtime" \
+      org.opencontainers.image.description="ONNX Runtime CUDA provider with CUDA 13 and cuDNN 9 on ROS 2 Jazzy."
+
+USER ubuntu
+
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+  CMD ["python3", "-c", "import onnxruntime as ort; assert 'CUDAExecutionProvider' in ort.get_available_providers()"]
+
+FROM inference-nvidia AS provider-conformance-nvidia
+
+USER root
+COPY docker/python/provider-conformance.lock /tmp/python/provider-conformance.lock
+
+RUN uv pip install \
+      --python /opt/venv/bin/python \
+      --require-hashes \
+      --no-cache \
+      --no-deps \
+      --requirement /tmp/python/provider-conformance.lock \
+    && install -d -o ubuntu -g ubuntu /reports \
+    && install -d -o root -g root -m 0555 /opt/provider-conformance \
+    && rm -rf /tmp/python
+
+COPY --chmod=0444 test/provider-conformance/test_provider.py /opt/provider-conformance/test_provider.py
+
+ENV ROBOTICS_EXPECTED_PROVIDER=CUDAExecutionProvider \
+    ROBOTICS_PROVIDER_REPORT=/reports/provider-conformance.json
+
+LABEL org.opencontainers.image.title="Robotics NVIDIA provider conformance" \
+      org.opencontainers.image.description="Hardware release gate for CUDA provider identity, fallback, and tensor parity."
 
 USER ubuntu
 WORKDIR /opt/provider-conformance

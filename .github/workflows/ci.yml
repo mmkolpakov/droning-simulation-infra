@@ -45,18 +45,20 @@ jobs:
         run: |
           docker buildx bake --print cpu >/dev/null
           docker buildx bake --print conformance >/dev/null
+          docker buildx bake --print nvidia >/dev/null
       - name: Validate Compose models
         run: |
           docker compose --profile test --profile acceptance config --quiet
           overlays=(
             compose.playback.yaml compose.record.yaml compose.evidence.yaml
             compose.high-throughput.yaml compose.benchmark.yaml
-            compose.security.yaml compose.stepped.yaml
+            compose.security.yaml compose.stepped.yaml compose.nvidia.yaml
           )
           profiles=(
             --profile test --profile acceptance --profile playback
             --profile record --profile evidence --profile benchmark
             --profile conformance
+            --profile nvidia --profile conformance-nvidia
             --profile security --profile security-init
             --profile security-verify --profile security-negative
             --profile stepped
@@ -151,6 +153,7 @@ jobs:
             --profile test --profile acceptance --profile playback
             --profile record --profile snapshot --profile evidence
             --profile benchmark --profile conformance
+            --profile nvidia --profile conformance-nvidia
             --profile security --profile security-init
             --profile security-verify --profile security-negative
             --profile stepped
@@ -158,7 +161,7 @@ jobs:
           overlays=(
             compose.playback.yaml compose.record.yaml compose.evidence.yaml
             compose.high-throughput.yaml compose.benchmark.yaml
-            compose.security.yaml compose.stepped.yaml
+            compose.security.yaml compose.stepped.yaml compose.nvidia.yaml
           )
           docker compose "${profiles[@]}" config --quiet
           for overlay in "${overlays[@]}"; do
@@ -484,6 +487,41 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  nvidia-image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      REGISTRY: ghcr.io/${{ github.repository_owner }}
+      VERSION: nvidia-ci
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4.2.0
+      - name: Set reproducible build metadata
+        run: |
+          {
+            echo "IMAGE_CREATED=$(git show --no-patch --format=%cI HEAD)"
+            echo "SOURCE_DATE_EPOCH=$(git show --no-patch --format=%ct HEAD)"
+            echo "VCS_REF=${GITHUB_SHA}"
+          } >> "$GITHUB_ENV"
+      - name: Build the NVIDIA runtime image
+        run: |
+          docker buildx bake inference-nvidia \
+            --load \
+            --set '*.platform=linux/amd64' \
+            --set '*.cache-from=type=gha,scope=runtime-infra-nvidia-amd64' \
+            --set '*.cache-to=type=gha,mode=max,scope=runtime-infra-nvidia-amd64'
+      - name: Verify the ONNX Runtime GPU ABI
+        run: |
+          image="${REGISTRY}/robotics-runtime-infra/inference-nvidia:${VERSION}"
+          docker run --rm --interactive --entrypoint /opt/venv/bin/python "${image}" - <<'PY'
+          import onnxruntime as ort
+
+          providers = ort.get_available_providers()
+          assert "CUDAExecutionProvider" in providers, providers
+          PY
+
   portable-arm64:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -553,6 +591,7 @@ jobs:
       - static-analysis
       - compose-version
       - integration
+      - nvidia-image
       - portable-arm64
       - reproducibility
     runs-on: ubuntu-24.04
@@ -563,11 +602,13 @@ jobs:
           STATIC_RESULT: ${{ needs.static-analysis.result }}
           COMPOSE_RESULT: ${{ needs.compose-version.result }}
           INTEGRATION_RESULT: ${{ needs.integration.result }}
+          NVIDIA_RESULT: ${{ needs.nvidia-image.result }}
           ARM64_RESULT: ${{ needs.portable-arm64.result }}
           REPRO_RESULT: ${{ needs.reproducibility.result }}
         run: |
           test "${STATIC_RESULT}" = success
           test "${COMPOSE_RESULT}" = success
           test "${INTEGRATION_RESULT}" = success
+          test "${NVIDIA_RESULT}" = success
           test "${ARM64_RESULT}" = success
           test "${REPRO_RESULT}" = success

@@ -62,7 +62,17 @@ group "multiarch" {
 }
 
 group "conformance" {
-  targets = ["provider-conformance-cpu"]
+  targets = [
+    "provider-conformance-cpu",
+    "provider-conformance-nvidia",
+  ]
+}
+
+group "nvidia" {
+  targets = [
+    "inference-nvidia",
+    "provider-conformance-nvidia",
+  ]
 }
 
 target "_common" {
@@ -119,6 +129,20 @@ target "provider-conformance-cpu" {
   target    = "provider-conformance-cpu"
   platforms = ["linux/amd64"]
   tags      = ["${REGISTRY}/robotics-runtime-infra/provider-conformance-cpu:${VERSION}"]
+}
+
+target "inference-nvidia" {
+  inherits  = ["_common"]
+  target    = "inference-nvidia"
+  platforms = ["linux/amd64"]
+  tags      = ["${REGISTRY}/robotics-runtime-infra/inference-nvidia:${VERSION}"]
+}
+
+target "provider-conformance-nvidia" {
+  inherits  = ["_common"]
+  target    = "provider-conformance-nvidia"
+  platforms = ["linux/amd64"]
+  tags      = ["${REGISTRY}/robotics-runtime-infra/provider-conformance-nvidia:${VERSION}"]
 }
 
 target "acceptance-observer" {

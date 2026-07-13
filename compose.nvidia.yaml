@@ -1,0 +1,63 @@
+---
+x-build-args: &build-args
+  IMAGE_CREATED: "${IMAGE_CREATED:-1970-01-01T00:00:00Z}"
+  IMAGE_SOURCE: "${IMAGE_SOURCE:-https://github.com/mmkolpakov/robotics-runtime-infra}"
+  IMAGE_VERSION: "${IMAGE_VERSION:-0.5.0}"
+  VCS_REF: "${VCS_REF:-local}"
+
+x-nvidia-runtime: &nvidia-runtime
+  init: true
+  network_mode: none
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: 1
+            capabilities: [gpu]
+
+services:
+  inference-nvidia-smoke:
+    <<: *nvidia-runtime
+    # yamllint disable-line rule:line-length
+    image: "${INFERENCE_NVIDIA_IMAGE:-ghcr.io/mmkolpakov/robotics-runtime-infra/inference-nvidia:0.5.0}"
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: inference-nvidia
+      args: *build-args
+    profiles: [nvidia]
+    command:
+      - python3
+      - -c
+      - >-
+        import onnxruntime as ort;
+        assert 'CUDAExecutionProvider' in ort.get_available_providers()
+    healthcheck:
+      disable: true
+
+  provider-conformance-nvidia:
+    <<: *nvidia-runtime
+    # yamllint disable-line rule:line-length
+    image: "${INFERENCE_NVIDIA_CONFORMANCE_IMAGE:-ghcr.io/mmkolpakov/robotics-runtime-infra/provider-conformance-nvidia:0.5.0}"
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: provider-conformance-nvidia
+      args: *build-args
+    profiles: [conformance-nvidia]
+    environment:
+      ROBOTICS_EXPECTED_PROVIDER: CUDAExecutionProvider
+      ROBOTICS_PROVIDER_ATOL: "${ROBOTICS_PROVIDER_ATOL:-1e-5}"
+      ROBOTICS_PROVIDER_REPORT: /reports/provider-conformance.json
+      ROBOTICS_PROVIDER_RTOL: "${ROBOTICS_PROVIDER_RTOL:-1e-4}"
+    volumes:
+      - type: bind
+        source: "${ROBOTICS_PROVIDER_REPORT_DIR:-./artifacts/provider-conformance/nvidia}"
+        target: /reports
+    healthcheck:
+      disable: true

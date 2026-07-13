@@ -51,6 +51,10 @@ jobs:
             target: inference-cpu
             image: inference-cpu
             platforms: linux/amd64,linux/arm64
+          - id: inference-nvidia
+            target: inference-nvidia
+            image: inference-nvidia
+            platforms: linux/amd64
           - id: acceptance-observer
             target: acceptance-observer
             image: acceptance-observer

@@ -48,6 +48,8 @@ def _profiled_providers(profile_path: Path) -> list[str]:
 
 
 def test_provider_executes_canonical_tensor_without_fallback() -> None:
+    if hasattr(ort, "preload_dlls"):
+        ort.preload_dlls(directory="")
     available = ort.get_available_providers()
     if EXPECTED_PROVIDER not in available:
         _write_report(
