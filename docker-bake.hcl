@@ -64,7 +64,15 @@ group "multiarch" {
 group "conformance" {
   targets = [
     "provider-conformance-cpu",
+    "provider-conformance-intel",
     "provider-conformance-nvidia",
+  ]
+}
+
+group "intel" {
+  targets = [
+    "inference-intel",
+    "provider-conformance-intel",
   ]
 }
 
@@ -129,6 +137,20 @@ target "provider-conformance-cpu" {
   target    = "provider-conformance-cpu"
   platforms = ["linux/amd64"]
   tags      = ["${REGISTRY}/robotics-runtime-infra/provider-conformance-cpu:${VERSION}"]
+}
+
+target "inference-intel" {
+  inherits  = ["_common"]
+  target    = "inference-intel"
+  platforms = ["linux/amd64"]
+  tags      = ["${REGISTRY}/robotics-runtime-infra/inference-intel:${VERSION}"]
+}
+
+target "provider-conformance-intel" {
+  inherits  = ["_common"]
+  target    = "provider-conformance-intel"
+  platforms = ["linux/amd64"]
+  tags      = ["${REGISTRY}/robotics-runtime-infra/provider-conformance-intel:${VERSION}"]
 }
 
 target "inference-nvidia" {

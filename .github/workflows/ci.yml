@@ -45,6 +45,7 @@ jobs:
         run: |
           docker buildx bake --print cpu >/dev/null
           docker buildx bake --print conformance >/dev/null
+          docker buildx bake --print intel >/dev/null
           docker buildx bake --print nvidia >/dev/null
       - name: Validate Compose models
         run: |
@@ -52,12 +53,16 @@ jobs:
           overlays=(
             compose.playback.yaml compose.record.yaml compose.evidence.yaml
             compose.high-throughput.yaml compose.benchmark.yaml
-            compose.security.yaml compose.stepped.yaml compose.nvidia.yaml
+            compose.security.yaml compose.stepped.yaml
+            compose.intel.yaml compose.nvidia.yaml
           )
           profiles=(
             --profile test --profile acceptance --profile playback
             --profile record --profile evidence --profile benchmark
             --profile conformance
+            --profile intel-cpu --profile conformance-intel-cpu
+            --profile conformance-intel-gpu-linux
+            --profile conformance-intel-gpu-wsl
             --profile nvidia --profile conformance-nvidia
             --profile security --profile security-init
             --profile security-verify --profile security-negative
@@ -153,6 +158,9 @@ jobs:
             --profile test --profile acceptance --profile playback
             --profile record --profile snapshot --profile evidence
             --profile benchmark --profile conformance
+            --profile intel-cpu --profile conformance-intel-cpu
+            --profile conformance-intel-gpu-linux
+            --profile conformance-intel-gpu-wsl
             --profile nvidia --profile conformance-nvidia
             --profile security --profile security-init
             --profile security-verify --profile security-negative
@@ -161,7 +169,8 @@ jobs:
           overlays=(
             compose.playback.yaml compose.record.yaml compose.evidence.yaml
             compose.high-throughput.yaml compose.benchmark.yaml
-            compose.security.yaml compose.stepped.yaml compose.nvidia.yaml
+            compose.security.yaml compose.stepped.yaml
+            compose.intel.yaml compose.nvidia.yaml
           )
           docker compose "${profiles[@]}" config --quiet
           for overlay in "${overlays[@]}"; do
@@ -522,6 +531,52 @@ jobs:
           assert "CUDAExecutionProvider" in providers, providers
           PY
 
+  intel-image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      REGISTRY: ghcr.io/${{ github.repository_owner }}
+      VERSION: intel-ci
+      # yamllint disable-line rule:line-length
+      INFERENCE_INTEL_IMAGE: ghcr.io/${{ github.repository_owner }}/robotics-runtime-infra/inference-intel:intel-ci
+      # yamllint disable-line rule:line-length
+      INFERENCE_INTEL_CONFORMANCE_IMAGE: ghcr.io/${{ github.repository_owner }}/robotics-runtime-infra/provider-conformance-intel:intel-ci
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4.2.0
+      - name: Set reproducible build metadata
+        run: |
+          {
+            echo "IMAGE_CREATED=$(git show --no-patch --format=%cI HEAD)"
+            echo "SOURCE_DATE_EPOCH=$(git show --no-patch --format=%ct HEAD)"
+            echo "VCS_REF=${GITHUB_SHA}"
+          } >> "$GITHUB_ENV"
+      - name: Build the Intel runtime and conformance images
+        run: |
+          docker buildx bake intel \
+            --load \
+            --set '*.platform=linux/amd64' \
+            --set '*.cache-from=type=gha,scope=runtime-infra-intel-amd64' \
+            --set '*.cache-to=type=gha,mode=max,scope=runtime-infra-intel-amd64'
+      - name: Verify OpenVINO CPU execution without fallback
+        run: |
+          report_dir="${PWD}/artifacts/provider-conformance/intel-cpu"
+          mkdir -p "${report_dir}"
+          sudo chown -R 1000:1000 "${PWD}/artifacts/provider-conformance"
+          ROBOTICS_PROVIDER_REPORT_DIR="${report_dir}" \
+            docker compose -f compose.yaml -f compose.intel.yaml \
+            --profile conformance-intel-cpu run \
+            --rm --no-deps provider-conformance-intel-cpu
+          jq -e '
+            .status == "passed" and
+            .expected_provider == "OpenVINOExecutionProvider" and
+            .executed_providers == ["OpenVINOExecutionProvider"] and
+            .provider_options.device_type == "CPU" and
+            .fallback_count == 0
+          ' "${report_dir}/provider-conformance.json"
+
   portable-arm64:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -591,6 +646,7 @@ jobs:
       - static-analysis
       - compose-version
       - integration
+      - intel-image
       - nvidia-image
       - portable-arm64
       - reproducibility
@@ -602,6 +658,7 @@ jobs:
           STATIC_RESULT: ${{ needs.static-analysis.result }}
           COMPOSE_RESULT: ${{ needs.compose-version.result }}
           INTEGRATION_RESULT: ${{ needs.integration.result }}
+          INTEL_RESULT: ${{ needs.intel-image.result }}
           NVIDIA_RESULT: ${{ needs.nvidia-image.result }}
           ARM64_RESULT: ${{ needs.portable-arm64.result }}
           REPRO_RESULT: ${{ needs.reproducibility.result }}
@@ -609,6 +666,7 @@ jobs:
           test "${STATIC_RESULT}" = success
           test "${COMPOSE_RESULT}" = success
           test "${INTEGRATION_RESULT}" = success
+          test "${INTEL_RESULT}" = success
           test "${NVIDIA_RESULT}" = success
           test "${ARM64_RESULT}" = success
           test "${REPRO_RESULT}" = success

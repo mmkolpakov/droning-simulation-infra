@@ -17,6 +17,26 @@ FROM ${RCLONE_IMAGE} AS rclone
 FROM ${AWS_CLI_IMAGE} AS aws-cli
 FROM ${NVIDIA_CUDA_BASE_IMAGE} AS nvidia-cuda-runtime
 
+FROM ${UBUNTU_BASE_IMAGE} AS intel-gpu-packages
+ADD --checksum=sha256:6c1fff18f5ea7ef23d3e5532750822363bf4688d342d09af31470329f54a83d6 \
+  https://github.com/intel/intel-graphics-compiler/releases/download/v2.2.3/intel-igc-core-2_2.2.3%2B18220_amd64.deb \
+  /packages/intel-igc-core-2_2.2.3+18220_amd64.deb
+ADD --checksum=sha256:60e9e4de95b191fd9b49123e0d745c6071283a38e632059e9c4ffa935e99d4e7 \
+  https://github.com/intel/intel-graphics-compiler/releases/download/v2.2.3/intel-igc-opencl-2_2.2.3%2B18220_amd64.deb \
+  /packages/intel-igc-opencl-2_2.2.3+18220_amd64.deb
+ADD --checksum=sha256:585de2bc881eaef17207449f2a6d5d7efb2b1680a6293546fcd01fc4a869812c \
+  https://github.com/intel/compute-runtime/releases/download/24.48.31907.7/intel-level-zero-gpu_1.6.31907.7_amd64.deb \
+  /packages/intel-level-zero-gpu_1.6.31907.7_amd64.deb
+ADD --checksum=sha256:a3d0cf66868838951174918c61ee75e34537859309c79486e0b2a7b44cfe13a5 \
+  https://github.com/intel/compute-runtime/releases/download/24.48.31907.7/intel-opencl-icd_24.48.31907.7_amd64.deb \
+  /packages/intel-opencl-icd_24.48.31907.7_amd64.deb
+ADD --checksum=sha256:48154eae949e17b5a1806aa5988f0013a490a062a5c62fa635d4a97ded442b26 \
+  https://github.com/oneapi-src/level-zero/releases/download/v1.21.9/level-zero_1.21.9%2Bu24.04_amd64.deb \
+  /packages/level-zero_1.21.9+u24.04_amd64.deb
+ADD --checksum=sha256:a6adb750d17c8eb3c50a5b063115c762ffe57724cfbd45cc38e5abe823c49bd2 \
+  https://github.com/intel/compute-runtime/releases/download/24.48.31907.7/libigdgmm12_22.5.4_amd64.deb \
+  /packages/libigdgmm12_22.5.4_amd64.deb
+
 # Rebuild the exact yq release source with the patched Go toolchain. The
 # upstream release binary was built with a Go standard library below 1.26.5.
 FROM --platform=${BUILDPLATFORM} ${GO_BUILDER_IMAGE} AS yq
@@ -358,6 +378,77 @@ ENV ROBOTICS_EXPECTED_PROVIDER=CPUExecutionProvider \
 
 LABEL org.opencontainers.image.title="Robotics CPU provider conformance" \
       org.opencontainers.image.description="Release gate for ONNX Runtime provider identity, fallback, and tensor parity."
+
+USER ubuntu
+WORKDIR /opt/provider-conformance
+
+ENTRYPOINT ["python3", "-m", "pytest"]
+CMD ["-q", "-p", "no:cacheprovider", "--junitxml=/reports/provider-conformance.junit.xml", "test_provider.py"]
+
+HEALTHCHECK NONE
+
+FROM edge-runtime AS inference-intel
+
+USER root
+COPY --from=uv /uv /uvx /usr/local/bin/
+COPY --from=intel-gpu-packages /packages /tmp/intel-gpu
+COPY docker/python/inference-intel.lock /tmp/python/inference-intel.lock
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      clinfo \
+      ocl-icd-libopencl1 \
+      /tmp/intel-gpu/*.deb \
+    && uv venv --python /usr/bin/python3 --system-site-packages /opt/venv \
+    && uv pip install \
+      --python /opt/venv/bin/python \
+      --require-hashes \
+      --no-cache \
+      --no-deps \
+      --requirement /tmp/python/inference-intel.lock \
+    && uv pip freeze --python /opt/venv/bin/python \
+      > /usr/share/robotics-runtime/python-packages.txt \
+    && rm -rf \
+      /tmp/intel-gpu \
+      /tmp/python \
+      /var/cache/ldconfig/aux-cache \
+      /var/lib/apt/lists/* \
+      /var/log/apt/* \
+      /var/log/alternatives.log \
+      /var/log/dpkg.log
+
+ENV PATH="/opt/venv/bin:${PATH}"
+
+LABEL org.opencontainers.image.title="Robotics Intel inference runtime" \
+      org.opencontainers.image.description="ONNX Runtime OpenVINO provider for explicit Intel CPU and GPU execution on ROS 2 Jazzy."
+
+USER ubuntu
+
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+  CMD ["python3", "-c", "import onnxruntime as ort; assert 'OpenVINOExecutionProvider' in ort.get_available_providers()"]
+
+FROM inference-intel AS provider-conformance-intel
+
+USER root
+COPY docker/python/provider-conformance.lock /tmp/python/provider-conformance.lock
+
+RUN uv pip install \
+      --python /opt/venv/bin/python \
+      --require-hashes \
+      --no-cache \
+      --no-deps \
+      --requirement /tmp/python/provider-conformance.lock \
+    && install -d -o ubuntu -g ubuntu /reports \
+    && install -d -o root -g root -m 0555 /opt/provider-conformance \
+    && rm -rf /tmp/python
+
+COPY --chmod=0444 test/provider-conformance/test_provider.py /opt/provider-conformance/test_provider.py
+
+ENV ROBOTICS_EXPECTED_PROVIDER=OpenVINOExecutionProvider \
+    ROBOTICS_PROVIDER_REPORT=/reports/provider-conformance.json
+
+LABEL org.opencontainers.image.title="Robotics Intel provider conformance" \
+      org.opencontainers.image.description="Hardware gate for explicit OpenVINO device identity, fallback, and tensor parity."
 
 USER ubuntu
 WORKDIR /opt/provider-conformance
