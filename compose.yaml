@@ -120,6 +120,29 @@ services:
     healthcheck:
       disable: true
 
+  provider-conformance-cpu:
+    <<: *runtime
+    # yamllint disable-line rule:line-length
+    image: "${INFERENCE_CPU_CONFORMANCE_IMAGE:-ghcr.io/mmkolpakov/robotics-runtime-infra/provider-conformance-cpu:0.5.0}"
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: provider-conformance-cpu
+      args: *build-args
+    profiles: [conformance]
+    environment:
+      ROBOTICS_EXPECTED_PROVIDER: "${ROBOTICS_EXPECTED_PROVIDER:-CPUExecutionProvider}"
+      ROBOTICS_PROVIDER_ATOL: "${ROBOTICS_PROVIDER_ATOL:-1e-6}"
+      ROBOTICS_PROVIDER_OPTIONS: "${ROBOTICS_PROVIDER_OPTIONS:-}"
+      ROBOTICS_PROVIDER_REPORT: /reports/provider-conformance.json
+      ROBOTICS_PROVIDER_RTOL: "${ROBOTICS_PROVIDER_RTOL:-1e-5}"
+    volumes:
+      - type: bind
+        source: "${ROBOTICS_PROVIDER_REPORT_DIR:-./artifacts/provider-conformance/cpu}"
+        target: /reports
+    healthcheck:
+      disable: true
+
   acceptance-observer:
     <<: *runtime
     image: "${OBSERVER_IMAGE:-ghcr.io/mmkolpakov/robotics-runtime-infra/acceptance-observer:0.5.0}"

@@ -42,7 +42,9 @@ jobs:
       - name: Run repository hooks
         run: uvx --from pre-commit==4.6.0 pre-commit run --all-files --show-diff-on-failure
       - name: Validate Docker Bake definition
-        run: docker buildx bake --print cpu >/dev/null
+        run: |
+          docker buildx bake --print cpu >/dev/null
+          docker buildx bake --print conformance >/dev/null
       - name: Validate Compose models
         run: |
           docker compose --profile test --profile acceptance config --quiet
@@ -54,6 +56,7 @@ jobs:
           profiles=(
             --profile test --profile acceptance --profile playback
             --profile record --profile evidence --profile benchmark
+            --profile conformance
             --profile security --profile security-init
             --profile security-verify --profile security-negative
             --profile stepped
@@ -147,7 +150,8 @@ jobs:
           profiles=(
             --profile test --profile acceptance --profile playback
             --profile record --profile snapshot --profile evidence
-            --profile benchmark --profile security --profile security-init
+            --profile benchmark --profile conformance
+            --profile security --profile security-init
             --profile security-verify --profile security-negative
             --profile stepped
           )
@@ -179,6 +183,8 @@ jobs:
       SENSOR_IMAGE: ghcr.io/${{ github.repository_owner }}/robotics-runtime-infra/sensor:ci
       INFERENCE_CPU_IMAGE: ghcr.io/${{ github.repository_owner }}/robotics-runtime-infra/inference-cpu:ci
       # yamllint disable-line rule:line-length
+      INFERENCE_CPU_CONFORMANCE_IMAGE: ghcr.io/${{ github.repository_owner }}/robotics-runtime-infra/provider-conformance-cpu:ci
+      # yamllint disable-line rule:line-length
       OBSERVER_IMAGE: ghcr.io/${{ github.repository_owner }}/robotics-runtime-infra/acceptance-observer:ci
       BENCHMARK_IMAGE: ghcr.io/${{ github.repository_owner }}/robotics-runtime-infra/benchmark:ci
       EVIDENCE_IMAGE: ghcr.io/${{ github.repository_owner }}/robotics-runtime-infra/evidence-sink:ci
@@ -196,7 +202,7 @@ jobs:
           } >> "$GITHUB_ENV"
       - name: Build the amd64 CPU product
         run: |
-          docker buildx bake cpu \
+          docker buildx bake cpu provider-conformance-cpu \
             --load \
             --set '*.platform=linux/amd64' \
             --set '*.cache-from=type=gha,scope=runtime-infra-amd64' \
@@ -208,6 +214,33 @@ jobs:
           docker compose --profile test run --rm --no-deps inference-cpu-smoke
           docker run --rm "${OBSERVER_IMAGE}" robotics-acceptance --version
           docker run --rm "${EVIDENCE_IMAGE}" versions
+      - name: Verify CPU provider identity and tensor parity
+        run: |
+          report_dir="${PWD}/artifacts/provider-conformance/cpu"
+          negative_dir="${PWD}/artifacts/provider-conformance/cpu-negative"
+          mkdir -p "${report_dir}" "${negative_dir}"
+          sudo chown -R 1000:1000 "${PWD}/artifacts/provider-conformance"
+          ROBOTICS_PROVIDER_REPORT_DIR="${report_dir}" \
+            docker compose --profile conformance run \
+            --rm --no-deps provider-conformance-cpu
+          jq -e '
+            .status == "passed" and
+            .expected_provider == "CPUExecutionProvider" and
+            .executed_providers == ["CPUExecutionProvider"] and
+            .fallback_count == 0
+          ' "${report_dir}/provider-conformance.json"
+          set +e
+          ROBOTICS_EXPECTED_PROVIDER=CUDAExecutionProvider \
+          ROBOTICS_PROVIDER_REPORT_DIR="${negative_dir}" \
+            docker compose --profile conformance run \
+            --rm --no-deps provider-conformance-cpu
+          status=$?
+          set -e
+          test "${status}" -ne 0
+          jq -e '
+            .status == "failed" and
+            .reason == "expected_provider_unavailable"
+          ' "${negative_dir}/provider-conformance.json"
       - name: Run ROS and Gazebo acceptance tests
         run: |
           docker compose up --detach --no-build --wait --wait-timeout 120 simulation

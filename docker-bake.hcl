@@ -61,6 +61,10 @@ group "multiarch" {
   ]
 }
 
+group "conformance" {
+  targets = ["provider-conformance-cpu"]
+}
+
 target "_common" {
   context    = "."
   dockerfile = "Dockerfile"
@@ -108,6 +112,13 @@ target "inference-cpu" {
   target    = "inference-cpu"
   platforms = ["linux/amd64", "linux/arm64"]
   tags      = ["${REGISTRY}/robotics-runtime-infra/inference-cpu:${VERSION}"]
+}
+
+target "provider-conformance-cpu" {
+  inherits  = ["_common"]
+  target    = "provider-conformance-cpu"
+  platforms = ["linux/amd64"]
+  tags      = ["${REGISTRY}/robotics-runtime-infra/provider-conformance-cpu:${VERSION}"]
 }
 
 target "acceptance-observer" {

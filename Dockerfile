@@ -334,6 +334,37 @@ USER ubuntu
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
   CMD ["python3", "-c", "import onnxruntime as ort; assert 'CPUExecutionProvider' in ort.get_available_providers()"]
 
+FROM inference-cpu AS provider-conformance-cpu
+
+USER root
+COPY docker/python/provider-conformance.lock /tmp/python/provider-conformance.lock
+
+RUN uv pip install \
+      --python /opt/venv/bin/python \
+      --require-hashes \
+      --no-cache \
+      --no-deps \
+      --requirement /tmp/python/provider-conformance.lock \
+    && install -d -o ubuntu -g ubuntu /reports \
+    && install -d -o root -g root -m 0555 /opt/provider-conformance \
+    && rm -rf /tmp/python
+
+COPY --chmod=0444 test/provider-conformance/test_provider.py /opt/provider-conformance/test_provider.py
+
+ENV ROBOTICS_EXPECTED_PROVIDER=CPUExecutionProvider \
+    ROBOTICS_PROVIDER_REPORT=/reports/provider-conformance.json
+
+LABEL org.opencontainers.image.title="Robotics CPU provider conformance" \
+      org.opencontainers.image.description="Release gate for ONNX Runtime provider identity, fallback, and tensor parity."
+
+USER ubuntu
+WORKDIR /opt/provider-conformance
+
+ENTRYPOINT ["python3", "-m", "pytest"]
+CMD ["-q", "-p", "no:cacheprovider", "--junitxml=/reports/provider-conformance.junit.xml", "test_provider.py"]
+
+HEALTHCHECK NONE
+
 FROM edge-runtime AS acceptance-observer
 
 USER root

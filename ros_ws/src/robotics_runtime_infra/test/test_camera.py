@@ -26,7 +26,9 @@ def generate_test_description() -> launch.LaunchDescription:
     )
     return launch.LaunchDescription(
         [
-            launch.actions.SetEnvironmentVariable("GZ_PARTITION", f"camera-{os.getpid()}"),
+            launch.actions.SetEnvironmentVariable(
+                "GZ_PARTITION", f"camera-{os.getpid()}"
+            ),
             launch.actions.SetEnvironmentVariable("LIBGL_ALWAYS_SOFTWARE", "1"),
             launch.actions.IncludeLaunchDescription(
                 launch.launch_description_sources.PythonLaunchDescriptionSource(

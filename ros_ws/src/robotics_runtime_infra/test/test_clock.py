@@ -22,7 +22,9 @@ def generate_test_description() -> launch.LaunchDescription:
     )
     return launch.LaunchDescription(
         [
-            launch.actions.SetEnvironmentVariable("GZ_PARTITION", f"clock-{os.getpid()}"),
+            launch.actions.SetEnvironmentVariable(
+                "GZ_PARTITION", f"clock-{os.getpid()}"
+            ),
             launch.actions.IncludeLaunchDescription(
                 launch.launch_description_sources.PythonLaunchDescriptionSource(
                     str(launch_file)
@@ -48,7 +50,12 @@ class TestClock(unittest.TestCase):
             while len(samples) < 10 and time.monotonic() < deadline:
                 rclpy.spin_once(node, timeout_sec=0.5)
             self.assertGreaterEqual(len(samples), 10)
-            self.assertTrue(all(current > previous for previous, current in zip(samples, samples[1:])))
+            self.assertTrue(
+                all(
+                    current > previous
+                    for previous, current in zip(samples, samples[1:])
+                )
+            )
         finally:
             node.destroy_subscription(subscription)
             node.destroy_node()

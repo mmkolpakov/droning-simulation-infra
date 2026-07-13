@@ -15,5 +15,8 @@
 !docker/evidence-sink/**
 !docker/runtime/
 !docker/runtime/**
+!test/
+!test/provider-conformance/
+!test/provider-conformance/**
 !ros_ws/src/robotics_runtime_infra/
 !ros_ws/src/robotics_runtime_infra/**
