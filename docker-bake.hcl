@@ -76,7 +76,7 @@ group "cpu" {
     "benchmark-runtime",
     "evidence-sink",
     "permit-preflight",
-    "time-fixture",
+    "host-io-fixture",
   ]
 }
 
@@ -89,7 +89,7 @@ group "multiarch" {
     "benchmark-runtime",
     "evidence-sink",
     "permit-preflight",
-    "time-fixture",
+    "host-io-fixture",
   ]
 }
 
@@ -144,8 +144,8 @@ group "rknn" {
   ]
 }
 
-group "time-test" {
-  targets = ["time-fixture"]
+group "host-io-test" {
+  targets = ["host-io-fixture"]
 }
 
 target "_common" {
@@ -398,11 +398,11 @@ target "acceptance-observer" {
   tags      = ["${REGISTRY}/robotics-runtime-infra/acceptance-observer:${VERSION}"]
 }
 
-target "time-fixture" {
+target "host-io-fixture" {
   inherits  = ["_common"]
-  target    = "time-fixture"
+  target    = "host-io-fixture"
   platforms = ["linux/amd64", "linux/arm64"]
-  tags      = ["${REGISTRY}/robotics-runtime-infra/time-fixture:${VERSION}"]
+  tags      = ["${REGISTRY}/robotics-runtime-infra/host-io-fixture:${VERSION}"]
 }
 
 target "benchmark-runtime" {

@@ -69,3 +69,60 @@ test_arbitrary_serial_preflight_path_is_denied if {
 	}}}
 	count(violations) == 1
 }
+
+test_receive_only_can_observation_is_allowed if {
+	violations := compose.deny with input as {"services": {"can-observation-client": {
+		"profiles": ["can-observation"],
+		"command": ["nc", "172.30.247.1", "28700"],
+		"networks": {"robotics-can-observation": null},
+		"cap_drop": ["ALL"],
+		"security_opt": ["no-new-privileges:true"],
+	}}}
+	count(violations) == 0
+}
+
+test_can_device_is_denied_in_observation_profile if {
+	violations := compose.deny with input as {"services": {"can-observation-client": {
+		"profiles": ["can-observation"],
+		"command": ["nc", "172.30.247.1", "28700"],
+		"networks": {"robotics-can-observation": null},
+		"devices": [{"source": "/dev/robotics/can0", "target": "/dev/robotics/can0"}],
+		"cap_drop": ["ALL"],
+		"security_opt": ["no-new-privileges:true"],
+	}}}
+	count(violations) == 1
+}
+
+test_can_transmit_tool_is_denied_in_observation_profile if {
+	violations := compose.deny with input as {"services": {"can-observation-client": {
+		"profiles": ["can-observation"],
+		"command": ["cansend", "can0", "123#DEADBEEF"],
+		"networks": {"robotics-can-observation": null},
+		"cap_drop": ["ALL"],
+		"security_opt": ["no-new-privileges:true"],
+	}}}
+	count(violations) == 1
+}
+
+test_shell_wrapped_can_transmit_tool_is_denied_in_observation_profile if {
+	violations := compose.deny with input as {"services": {"can-observation-client": {
+		"profiles": ["can-observation"],
+		"command": ["sh", "-c", "/usr/bin/cansend can0 123#DEADBEEF"],
+		"networks": {"robotics-can-observation": null},
+		"cap_drop": ["ALL"],
+		"security_opt": ["no-new-privileges:true"],
+	}}}
+	count(violations) == 1
+}
+
+test_public_port_is_denied_in_can_observation_profile if {
+	violations := compose.deny with input as {"services": {"can-observation-client": {
+		"profiles": ["can-observation"],
+		"command": ["nc", "172.30.247.1", "28700"],
+		"networks": {"robotics-can-observation": null},
+		"ports": [{"target": 28700, "published": "28700"}],
+		"cap_drop": ["ALL"],
+		"security_opt": ["no-new-privileges:true"],
+	}}}
+	count(violations) == 1
+}

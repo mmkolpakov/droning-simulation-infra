@@ -73,6 +73,35 @@ deny contains message if {
 	message := "service \"serial-device-preflight\" requires /dev/serial/by-id or /dev/robotics"
 }
 
+deny contains message if {
+	some name, service in input.services
+	"can-observation" in object.get(service, "profiles", [])
+	count(object.get(service, "devices", [])) > 0
+	message := sprintf("service %q exposes a device in the CAN observation profile", [name])
+}
+
+deny contains message if {
+	some name, service in input.services
+	"can-observation" in object.get(service, "profiles", [])
+	count(object.get(service, "ports", [])) > 0
+	message := sprintf("service %q publishes a port in the CAN observation profile", [name])
+}
+
+deny contains message if {
+	some name, service in input.services
+	"can-observation" in object.get(service, "profiles", [])
+	not "robotics-can-observation" in object.keys(object.get(service, "networks", {}))
+	message := sprintf("service %q is outside the dedicated CAN observation network", [name])
+}
+
+deny contains message if {
+	some name, service in input.services
+	"can-observation" in object.get(service, "profiles", [])
+	some token in command_tokens(service)
+	forbidden_can_command(token)
+	message := sprintf("service %q contains CAN transmit or bidirectional tooling", [name])
+}
+
 volume_source(volume) := source if {
 	is_object(volume)
 	source := object.get(volume, "source", "")
@@ -129,4 +158,22 @@ stable_serial_device(source) if {
 
 stable_serial_device(source) if {
 	startswith(source, "/dev/robotics/")
+}
+
+command_tokens(service) := command if {
+	command := object.get(service, "command", [])
+	is_array(command)
+}
+
+command_tokens(service) := tokens if {
+	command := object.get(service, "command", "")
+	is_string(command)
+	tokens := split(command, " ")
+}
+
+forbidden_can_command(token) if {
+	regex.match(
+		"(^|.*/|.*[[:space:]])(cannelloni|cansend|socketcand)([[:space:]].*|$)",
+		lower(token),
+	)
 }

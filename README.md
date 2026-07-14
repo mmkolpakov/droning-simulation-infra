@@ -46,11 +46,12 @@ Release tags publish immutable digests for these images under
 | `acceptance-observer` | amd64, arm64 | Attach-only acceptance verification and JSON/JUnit results |
 | `benchmark` | amd64, arm64 | Apex.AI `performance_test` for ROS 2 transport measurements |
 | `evidence-sink` | amd64, arm64 | MCAP validation, checksums, S3-compatible upload and evidence finalization |
-| `time-fixture` | amd64, arm64 | CI-only validation of Ubuntu host time, systemd, and udev assets |
 
 The simulation image is tested by running Gazebo and ROS 2 tests on amd64. The
 portable images are built for amd64 and arm64; hardware-specific accelerators
 and device drivers are not qualified by the 0.5 release.
+CI also builds the non-release `host-io-fixture` image for amd64 and arm64 to
+validate host time, udev, systemd, and SocketCAN assets reproducibly.
 
 ## Version baseline
 
@@ -62,6 +63,7 @@ and device drivers are not qualified by the 0.5 release.
 | CPU inference | ONNX Runtime 1.26.0 |
 | Evidence format | rosbag2 MCAP and MCAP CLI 0.2.0 |
 | Time evidence | OpenTelemetry Collector Contrib 0.153.0; Chrony 4.5; linuxptp 4.0 |
+| CAN observation | Ubuntu `can-utils` 2023.03; upstream behavior checked against v2025.01 |
 | Compose | CI floor 2.35.1; CI current 5.3.1 |
 | Contracts | `robotics-runtime-contracts` 0.5.0 |
 | Acceptance harness | `robotics-acceptance-harness` 0.6.0 |
@@ -90,9 +92,10 @@ behavior being tested:
 | `compose.edge-attach.yaml` | `edge-attach`, `hil` | Attach-only observation through an external Docker network; HIL is permit-gated and SROS2-enforced |
 | `compose.time.yaml` | `time-chrony`, `time-ptp` | Export host-owned clock observations as contract-aligned OTLP JSON |
 | `compose.serial.yaml` | `serial-preflight` | Verify one exact stable serial device mapping without starting product code |
+| `compose.can-observation.yaml` | `can-observation` | Receive a host SocketCAN stream without exposing the bus to the container |
 
-Containers only observe host time and serial services; they cannot configure
-the host clock, udev, PTP interface, or physical bus.
+Containers only observe host time, serial identity, and CAN frames; they cannot
+configure the host clock, udev, PTP interface, or physical bus.
 
 For example, verify the packaged golden MCAP without starting Gazebo:
 
@@ -143,9 +146,9 @@ the host `_chrony` UID/GID.
 ## Physical host preflight
 
 The canonical physical host is Ubuntu 24.04 with systemd 255 or newer. The CI
-fixture qualifies Chrony 4.5, linuxptp 4.0, and systemd/udev 255.4 from the
-pinned Ubuntu snapshot. Time-source selection, interfaces, PTP domain, and
-acceptance thresholds remain site configuration.
+fixture qualifies Chrony 4.5, linuxptp 4.0, systemd/udev 255.4, and the Ubuntu
+`can-utils` package from the pinned snapshot. Time-source selection,
+interfaces, PTP domain, and acceptance thresholds remain site configuration.
 
 Install `config/time/chrony-command-socket.conf` as
 `/etc/chrony/conf.d/robotics-command-socket.conf` and
@@ -212,6 +215,33 @@ Use the first digest as `identity_sha256` and the second as
 The Compose policy rejects `/dev/ttyUSB*`, `/dev/ttyACM*`, wildcards, and a
 complete `/dev` mapping. Runtime manifests carry the reviewed stable identity
 and preflight evidence digests.
+
+For read-only CAN observation, install the template unit and create the
+dedicated internal Compose network before starting the gateway:
+
+```bash
+sudo apt-get install can-utils
+sudo install -m 0644 systemd/robotics-can-observation@.service \
+  /etc/systemd/system/
+docker compose -f compose.yaml -f compose.can-observation.yaml \
+  --profile can-observation create can-observation-client
+sudo systemctl daemon-reload
+sudo systemctl enable --now robotics-can-observation@can0.service
+docker compose -f compose.yaml -f compose.can-observation.yaml \
+  --profile can-observation up -d can-observation-client
+docker compose -f compose.yaml -f compose.can-observation.yaml \
+  --profile can-observation logs -f can-observation-client
+```
+
+The host owns link state, bitrate, termination, and frame transmission. The
+gateway serves the fixed TCP port `28700` only to the internal
+`172.30.247.0/28` network; its deterministic host endpoint is the bridge gateway
+`172.30.247.1:28700`. The systemd unit has no capabilities and applies a
+cgroup-BPF IP allow-list. Qualify this profile on a cgroup v2 host before using
+physical CAN; WSL2 kernels without `vcan` can validate only the static profile.
+The container has no CAN network interface or transmit utility. Command-capable
+CAN belongs to a separately authorized control profile and is not provided by
+this repository.
 
 ## Add a product repository
 

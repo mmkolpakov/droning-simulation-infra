@@ -65,7 +65,7 @@ jobs:
           docker buildx bake --print onnxruntime-jetson-source-verification >/dev/null
           docker buildx bake --print rknn >/dev/null
           docker buildx bake --print policy-tooling >/dev/null
-          docker buildx bake --print time-test >/dev/null
+          docker buildx bake --print host-io-test >/dev/null
       - name: Validate Compose models
         env:
           # Configuration-only fixture; production must use the published image digest.
@@ -82,7 +82,7 @@ jobs:
             compose.amd.yaml compose.intel.yaml compose.nvidia.yaml
             compose.nvidia-jetson.yaml
             compose.rknn.yaml
-            compose.serial.yaml compose.time.yaml
+            compose.serial.yaml compose.time.yaml compose.can-observation.yaml
           )
           profiles=(
             --profile test --profile acceptance --profile playback
@@ -104,6 +104,7 @@ jobs:
             --profile stepped --profile simulation
             --profile edge-attach --profile hil
             --profile serial-preflight --profile time-chrony --profile time-ptp
+            --profile can-observation
           )
           for overlay in "${overlays[@]}"; do
             docker compose -f compose.yaml -f "${overlay}" \
@@ -206,6 +207,11 @@ jobs:
             --profile time-chrony \
             --profile time-ptp \
             config --format json --output tmp/time-compose.json
+          docker compose \
+            -f compose.yaml \
+            -f compose.can-observation.yaml \
+            --profile can-observation \
+            config --format json --output tmp/can-observation-compose.json
           jq -e '
             (.services | keys | sort) == [
               "edge-attach-data-plane",
@@ -271,6 +277,30 @@ jobs:
               .security_opt == ["no-new-privileges:true"]
             )
           ' tmp/time-compose.json >/dev/null
+          jq -e '
+            (.services | keys) == ["can-observation-client"] and
+            .services["can-observation-client"].read_only == true and
+            .services["can-observation-client"].user == "65534:65534" and
+            .services["can-observation-client"].cap_drop == ["ALL"] and
+            (.services["can-observation-client"].cap_add // []) == [] and
+            (.services["can-observation-client"].devices // []) == [] and
+            (.services["can-observation-client"].ports // []) == [] and
+            .services["can-observation-client"].networks == {
+              "robotics-can-observation": null
+            } and
+            (.services["can-observation-client"].extra_hosts // []) == [] and
+            (.services["can-observation-client"].command | index("nc")) == 0 and
+            (.services["can-observation-client"].command | index("172.30.247.1")) == 3 and
+            (.services["can-observation-client"].command | index("cansend")) == null and
+            .networks["robotics-can-observation"].internal == true and
+            .networks["robotics-can-observation"].ipam.config == [{
+              "subnet": "172.30.247.0/28",
+              "gateway": "172.30.247.1"
+            }] and
+            .networks["robotics-can-observation"].driver_opts[
+              "com.docker.network.bridge.name"
+            ] == "robotics-can"
+          ' tmp/can-observation-compose.json >/dev/null
           test "$(
             policy_deny_count \
               policy/compose.rego compose tmp/edge-attach-compose.json
@@ -283,6 +313,10 @@ jobs:
           )" -eq 0
           test "$(
             policy_deny_count policy/compose.rego compose tmp/time-compose.json
+          )" -eq 0
+          test "$(
+            policy_deny_count \
+              policy/compose.rego compose tmp/can-observation-compose.json
           )" -eq 0
           "${yq[@]}" -o=json test/acceptance/stepped-smoke.yaml \
             > tmp/stepped-smoke.json
@@ -480,6 +514,7 @@ jobs:
             --profile stepped --profile simulation
             --profile edge-attach --profile hil
             --profile serial-preflight --profile time-chrony --profile time-ptp
+            --profile can-observation
           )
           overlays=(
             compose.playback.yaml compose.record.yaml compose.evidence.yaml
@@ -488,7 +523,7 @@ jobs:
             compose.amd.yaml compose.intel.yaml compose.nvidia.yaml
             compose.nvidia-jetson.yaml
             compose.rknn.yaml
-            compose.serial.yaml compose.time.yaml
+            compose.serial.yaml compose.time.yaml compose.can-observation.yaml
           )
           docker compose "${profiles[@]}" config --quiet
           for overlay in "${overlays[@]}"; do
@@ -520,7 +555,9 @@ jobs:
       EVIDENCE_IMAGE: ghcr.io/${{ github.repository_owner }}/robotics-runtime-infra/evidence-sink:ci
       # yamllint disable-line rule:line-length
       PERMIT_PREFLIGHT_IMAGE: ghcr.io/${{ github.repository_owner }}/robotics-runtime-infra/permit-preflight:ci
-      TIME_FIXTURE_IMAGE: ghcr.io/${{ github.repository_owner }}/robotics-runtime-infra/time-fixture:ci
+      HOST_IO_FIXTURE_IMAGE: ghcr.io/${{ github.repository_owner }}/robotics-runtime-infra/host-io-fixture:ci
+      # yamllint disable-line rule:line-length
+      CAN_CLIENT_IMAGE: busybox:1.37.0-musl@sha256:222ad6d973c0d198014546a65cd02c5fdedcc172123c5b4c2bf0af636550bd94
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
@@ -552,18 +589,22 @@ jobs:
           docker run --rm "${OBSERVER_IMAGE}" robotics-acceptance --version
           docker run --rm "${EVIDENCE_IMAGE}" versions
           docker run --rm "${PERMIT_PREFLIGHT_IMAGE}" versions
-          docker run --rm --entrypoint cat "${TIME_FIXTURE_IMAGE}" \
-            /usr/share/robotics-runtime/time-fixture-packages.tsv \
-            > "${RUNNER_TEMP}/time-fixture-packages.tsv"
+          docker run --rm --entrypoint cat "${HOST_IO_FIXTURE_IMAGE}" \
+            /usr/share/robotics-runtime/host-io-fixture-packages.tsv \
+            > "${RUNNER_TEMP}/host-io-fixture-packages.tsv"
+          grep -Fxq $'can-utils\t2023.03-1\tamd64' \
+            "${RUNNER_TEMP}/host-io-fixture-packages.tsv"
           grep -Fxq $'chrony\t4.5-1ubuntu4.2\tamd64' \
-            "${RUNNER_TEMP}/time-fixture-packages.tsv"
+            "${RUNNER_TEMP}/host-io-fixture-packages.tsv"
+          grep -Fxq $'iproute2\t6.1.0-1ubuntu6.3\tamd64' \
+            "${RUNNER_TEMP}/host-io-fixture-packages.tsv"
           grep -Fxq $'linuxptp\t4.0-1ubuntu1.1\tamd64' \
-            "${RUNNER_TEMP}/time-fixture-packages.tsv"
+            "${RUNNER_TEMP}/host-io-fixture-packages.tsv"
           grep -Fxq $'systemd\t255.4-1ubuntu8.16\tamd64' \
-            "${RUNNER_TEMP}/time-fixture-packages.tsv"
+            "${RUNNER_TEMP}/host-io-fixture-packages.tsv"
           grep -Fxq $'udev\t255.4-1ubuntu8.16\tamd64' \
-            "${RUNNER_TEMP}/time-fixture-packages.tsv"
-          docker run --rm --entrypoint test "${TIME_FIXTURE_IMAGE}" \
+            "${RUNNER_TEMP}/host-io-fixture-packages.tsv"
+          docker run --rm --entrypoint test "${HOST_IO_FIXTURE_IMAGE}" \
             ! -s /etc/machine-id
       - name: Verify host time evidence and stable serial mapping
         run: |
@@ -601,11 +642,12 @@ jobs:
 
           docker run --rm \
             --volume "${PWD}:/project:ro" \
-            --entrypoint bash "${TIME_FIXTURE_IMAGE}" -euo pipefail -c '
+            --entrypoint bash "${HOST_IO_FIXTURE_IMAGE}" -euo pipefail -c '
               udevadm verify /project/config/udev/99-robotics-serial.rules
               systemd-analyze verify \
                 /project/systemd/robotics-ptp-sample.service \
-                /project/systemd/robotics-ptp-sample.timer
+                /project/systemd/robotics-ptp-sample.timer \
+                /project/systemd/robotics-can-observation@.service
               systemd-tmpfiles --create \
                 /project/tmpfiles.d/robotics-time.conf
               test -f /run/robotics-time/pmc.log
@@ -617,7 +659,7 @@ jobs:
           docker run --detach --name host-chronyd \
             --network none \
             --volume "${socket_dir}:/run/robotics-time" \
-            "${TIME_FIXTURE_IMAGE}" >/dev/null
+            "${HOST_IO_FIXTURE_IMAGE}" >/dev/null
           docker run --detach --name host-chrony-otel \
             --network none \
             --user 100:101 \
@@ -657,7 +699,7 @@ jobs:
             --volume "${unsync_socket_dir}:/run/robotics-time" \
             --volume \
               "${PWD}/config/time/chrony-unsynchronized-fixture.conf:/etc/chrony/chrony.conf:ro" \
-            "${TIME_FIXTURE_IMAGE}" >/dev/null
+            "${HOST_IO_FIXTURE_IMAGE}" >/dev/null
           docker run --detach --name host-chrony-otel-unsync \
             --network none \
             --user 100:101 \
@@ -740,6 +782,90 @@ jobs:
               -f compose.serial.yaml \
               --profile serial-preflight \
               run --rm --no-deps serial-device-preflight
+      - name: Verify receive-only SocketCAN gateway
+        run: |
+          compose=(
+            docker compose
+            -f compose.yaml
+            -f compose.can-observation.yaml
+            --profile can-observation
+          )
+          unit=robotics-can-observation@vcan-ci.service
+          denied_network=robotics-can-observation-denied
+          allowed_gateway=172.30.247.1
+          denied_gateway=172.30.248.1
+          cleanup() {
+            "${compose[@]}" down --volumes --remove-orphans \
+              >/dev/null 2>&1 || true
+            docker network rm "${denied_network}" >/dev/null 2>&1 || true
+            sudo systemctl stop "${unit}" >/dev/null 2>&1 || true
+            sudo rm -f /etc/systemd/system/robotics-can-observation@.service
+            sudo systemctl daemon-reload
+            sudo systemctl reset-failed "${unit}" >/dev/null 2>&1 || true
+            sudo ip link del vcan-ci >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            can-utils "linux-modules-extra-$(uname -r)"
+          sudo modprobe vcan
+          sudo ip link add dev vcan-ci type vcan
+          sudo ip link set dev vcan-ci up
+          "${compose[@]}" create can-observation-client
+          sudo install -m 0644 \
+            systemd/robotics-can-observation@.service \
+            /etc/systemd/system/robotics-can-observation@.service
+          sudo systemctl daemon-reload
+          if ! sudo systemctl start "${unit}"; then
+            sudo journalctl --no-pager --unit "${unit}"
+            exit 1
+          fi
+          sudo systemctl is-active --quiet "${unit}"
+
+          docker run --rm \
+            --network robotics-can-observation \
+            "${CAN_CLIENT_IMAGE}" \
+            nc -z -w 2 "${allowed_gateway}" 28700
+
+          docker network create \
+            --internal \
+            --subnet 172.30.248.0/28 \
+            "${denied_network}" >/dev/null
+          if docker run --rm \
+            --network "${denied_network}" \
+            "${CAN_CLIENT_IMAGE}" \
+            nc -z -w 2 "${denied_gateway}" 28700; then
+            echo "CAN gateway accepted a client outside its allow-list" >&2
+            exit 1
+          fi
+
+          unexpected="${RUNNER_TEMP}/unexpected-can-frame.log"
+          rm -f "${unexpected}"
+          timeout 3 candump -L -n 1 vcan-ci > "${unexpected}" &
+          candump_pid=$!
+          sleep 1
+          printf '123#01020304\n' | docker run --rm --interactive \
+            --network robotics-can-observation \
+            "${CAN_CLIENT_IMAGE}" \
+            nc -w 1 "${allowed_gateway}" 28700 || true
+          wait "${candump_pid}" || test "$?" -eq 124
+          test ! -s "${unexpected}"
+
+          "${compose[@]}" up --detach can-observation-client
+          for _ in {1..20}; do
+            sudo ss -Htn state established sport = :28700 | grep -q . && break
+            sleep 1
+          done
+          sudo ss -Htn state established sport = :28700 | grep -q .
+          cansend vcan-ci 123#DEADBEEF
+          for _ in {1..20}; do
+            "${compose[@]}" logs --no-color can-observation-client \
+              | grep -q '123#DEADBEEF' && break
+            sleep 1
+          done
+          "${compose[@]}" logs --no-color can-observation-client \
+            | grep -q '123#DEADBEEF'
       - name: Verify Cosign blob boundary and tamper rejection
         env:
           COSIGN_PASSWORD: test-only
@@ -1144,7 +1270,7 @@ jobs:
             "${SIMULATION_IMAGE}" "${EDGE_IMAGE}" "${SENSOR_IMAGE}" \
             "${INFERENCE_CPU_IMAGE}" "${OBSERVER_IMAGE}" \
             "${BENCHMARK_IMAGE}" "${EVIDENCE_IMAGE}" \
-            "${PERMIT_PREFLIGHT_IMAGE}" "${TIME_FIXTURE_IMAGE}"; do
+            "${PERMIT_PREFLIGHT_IMAGE}" "${HOST_IO_FIXTURE_IMAGE}"; do
             safe_name="$(tr '/:' '__' <<<"${image}")"
             if ! docker image inspect "${image}" \
               > "artifacts/runtime/${safe_name}.json"; then
@@ -1173,7 +1299,7 @@ jobs:
             "${SIMULATION_IMAGE}" "${EDGE_IMAGE}" "${SENSOR_IMAGE}" \
             "${INFERENCE_CPU_IMAGE}" "${OBSERVER_IMAGE}" \
             "${BENCHMARK_IMAGE}" "${EVIDENCE_IMAGE}" \
-            "${PERMIT_PREFLIGHT_IMAGE}" "${TIME_FIXTURE_IMAGE}"; do
+            "${PERMIT_PREFLIGHT_IMAGE}" "${HOST_IO_FIXTURE_IMAGE}"; do
             "${trivy[@]}" \
               --skip-db-update --ignore-unfixed \
               --severity HIGH,CRITICAL --exit-code 1 "${image}"

@@ -317,7 +317,7 @@ RUN dpkg --install /packages/openssl.deb /packages/ca-certificates.deb \
       /var/log/alternatives.log \
       /var/log/dpkg.log
 
-FROM ubuntu-ca AS time-fixture
+FROM ubuntu-ca AS host-io-fixture
 
 ARG UBUNTU_SNAPSHOT
 
@@ -330,17 +330,23 @@ RUN export DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC \
       /usr/local/sbin/use-package-snapshots \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
+      can-utils \
       chrony \
+      iproute2 \
       linuxptp \
       systemd \
       udev \
+    && canlogserver > /tmp/canlogserver-usage 2>&1 \
+    && grep -F "Usage: canlogserver" /tmp/canlogserver-usage \
+    && rm /tmp/canlogserver-usage \
     && chronyd -v \
+    && ip -Version \
     && pmc -v \
     && udevadm --version \
     && install -d -m 0755 /usr/share/robotics-runtime \
     && dpkg-query -W -f='${binary:Package}\t${Version}\t${Architecture}\n' \
-      chrony linuxptp systemd udev \
-      | sort > /usr/share/robotics-runtime/time-fixture-packages.tsv \
+      can-utils chrony iproute2 linuxptp systemd udev \
+      | sort > /usr/share/robotics-runtime/host-io-fixture-packages.tsv \
     && rm -rf \
       /var/cache/ldconfig/aux-cache \
       /var/lib/apt/lists/* \
@@ -350,8 +356,8 @@ RUN export DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC \
 
 RUN truncate --size 0 /etc/machine-id
 
-LABEL org.opencontainers.image.title="Host time qualification fixture" \
-      org.opencontainers.image.description="Ubuntu 24.04 Chrony, LinuxPTP, systemd, and udev validation fixture."
+LABEL org.opencontainers.image.title="Host I/O qualification fixture" \
+      org.opencontainers.image.description="Ubuntu 24.04 time, udev, and SocketCAN host asset validation fixture."
 
 STOPSIGNAL SIGTERM
 CMD ["chronyd", "-d", "-x", "-f", "/etc/chrony/chrony.conf"]
