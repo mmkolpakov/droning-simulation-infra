@@ -759,8 +759,11 @@ jobs:
           test -s "${chrony_evidence}/hardware-time.otlp.json"
           docker stop --time 10 host-chrony-otel host-chronyd >/dev/null
           docker logs host-chrony-otel > "${work}/chrony-collector.log" 2>&1
-          ! grep -Eiq 'deprecated|(^|[[:space:]])error([[:space:]]|$)' \
-            "${work}/chrony-collector.log"
+          if grep -Eiq 'deprecated|(^|[[:space:]])error([[:space:]]|$)' \
+            "${work}/chrony-collector.log"; then
+            echo "Chrony collector log contains an error or deprecation" >&2
+            exit 1
+          fi
 
           docker run --detach --name host-ptp-otel \
             --network none \
@@ -776,8 +779,11 @@ jobs:
           test -s "${ptp_evidence}/hardware-time.otlp.json"
           docker stop --time 10 host-ptp-otel >/dev/null
           docker logs host-ptp-otel > "${work}/ptp-collector.log" 2>&1
-          ! grep -Eiq 'deprecated|(^|[[:space:]])error([[:space:]]|$)' \
-            "${work}/ptp-collector.log"
+          if grep -Eiq 'deprecated|(^|[[:space:]])error([[:space:]]|$)' \
+            "${work}/ptp-collector.log"; then
+            echo "PTP collector log contains an error or deprecation" >&2
+            exit 1
+          fi
 
           docker run --detach --name host-chronyd-unsync \
             --network none \
@@ -1369,6 +1375,8 @@ jobs:
                 --remap chatter:=/robotics/telemetry 2>&1 | \
                 grep --max-count=1 "I heard:"
             '
+          # The container shell expands the nested script variables.
+          # shellcheck disable=SC2016
           "${real_compose[@]}" --profile real-observation \
             run --rm --no-deps real-observation-observer \
             bash -Eeuo pipefail -c '
@@ -1398,6 +1406,8 @@ jobs:
             --profile real-observation-test-negative \
             up --detach \
             edge-attach-data-plane real-observation-test-unsecured-source
+          # The container shell expands the nested script variables.
+          # shellcheck disable=SC2016
           "${real_compose[@]}" --profile real-observation \
             run --rm --no-deps real-observation-observer \
             bash -Eeuo pipefail -c '
@@ -1614,10 +1624,16 @@ jobs:
             refs/tags/v2.3.2 | awk '{print $1}')"
           test "${revision}" = \
             42aa1d426c0a9e0869b6374edba009f7208a1926
-          ! grep -Eq '^(nvidia-|triton==)' \
-            docker/python/rknn-converter.lock
-          ! grep -Eq '^(nvidia-|triton==)' \
-            docker/python/rknn-runtime.lock
+          if grep -Eq '^(nvidia-|triton==)' \
+            docker/python/rknn-converter.lock; then
+            echo "RKNN converter lock contains a prohibited GPU package" >&2
+            exit 1
+          fi
+          if grep -Eq '^(nvidia-|triton==)' \
+            docker/python/rknn-runtime.lock; then
+            echo "RKNN runtime lock contains a prohibited GPU package" >&2
+            exit 1
+          fi
           docker buildx bake rknn-source-verification \
             --set '*.output=type=cacheonly'
       - name: Run the official RKNN conversion fixture
