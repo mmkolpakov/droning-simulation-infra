@@ -713,6 +713,7 @@ jobs:
             "${socket_dir}" "${unsync_socket_dir}" \
             "${chrony_evidence}" "${chrony_unsync_evidence}" \
             "${ptp_evidence}" "${ptp_unsync_evidence}"
+          sudo chmod 0770 "${socket_dir}" "${unsync_socket_dir}"
           cleanup() {
             docker rm --force \
               host-chronyd host-chrony-otel host-ptp-otel \
@@ -724,6 +725,20 @@ jobs:
             sudo rm -rf "${work}"
           }
           trap cleanup EXIT
+          wait_for_evidence() {
+            local path="$1"
+            shift
+            for _ in {1..30}; do
+              if test -s "${path}"; then
+                return 0
+              fi
+              sleep 1
+            done
+            for container in "$@"; do
+              docker logs "${container}" >&2 || true
+            done
+            return 1
+          }
 
           docker run --rm \
             --volume "${PWD}:/project:ro" \
@@ -752,11 +767,9 @@ jobs:
             --volume "${chrony_evidence}:/evidence" \
             --volume "${PWD}/config/time/otel-chrony.yaml:/config.yaml:ro" \
             "${otel_image}" --config=/config.yaml >/dev/null
-          for _ in {1..30}; do
-            test -s "${chrony_evidence}/hardware-time.otlp.json" && break
-            sleep 1
-          done
-          test -s "${chrony_evidence}/hardware-time.otlp.json"
+          wait_for_evidence \
+            "${chrony_evidence}/hardware-time.otlp.json" \
+            host-chronyd host-chrony-otel
           docker stop --time 10 host-chrony-otel host-chronyd >/dev/null
           docker logs host-chrony-otel > "${work}/chrony-collector.log" 2>&1
           if grep -Eiq 'deprecated|(^|[[:space:]])error([[:space:]]|$)' \
@@ -772,11 +785,8 @@ jobs:
             --volume "${PWD}/test/time/pmc.fixture:/input/pmc.log:ro" \
             --volume "${PWD}/config/time/otel-ptp.yaml:/config.yaml:ro" \
             "${otel_image}" --config=/config.yaml >/dev/null
-          for _ in {1..30}; do
-            test -s "${ptp_evidence}/hardware-time.otlp.json" && break
-            sleep 1
-          done
-          test -s "${ptp_evidence}/hardware-time.otlp.json"
+          wait_for_evidence \
+            "${ptp_evidence}/hardware-time.otlp.json" host-ptp-otel
           docker stop --time 10 host-ptp-otel >/dev/null
           docker logs host-ptp-otel > "${work}/ptp-collector.log" 2>&1
           if grep -Eiq 'deprecated|(^|[[:space:]])error([[:space:]]|$)' \
@@ -798,12 +808,9 @@ jobs:
             --volume "${chrony_unsync_evidence}:/evidence" \
             --volume "${PWD}/config/time/otel-chrony.yaml:/config.yaml:ro" \
             "${otel_image}" --config=/config.yaml >/dev/null
-          for _ in {1..30}; do
-            test -s \
-              "${chrony_unsync_evidence}/hardware-time.otlp.json" && break
-            sleep 1
-          done
-          test -s "${chrony_unsync_evidence}/hardware-time.otlp.json"
+          wait_for_evidence \
+            "${chrony_unsync_evidence}/hardware-time.otlp.json" \
+            host-chronyd-unsync host-chrony-otel-unsync
           docker stop --time 10 \
             host-chrony-otel-unsync host-chronyd-unsync >/dev/null
 
