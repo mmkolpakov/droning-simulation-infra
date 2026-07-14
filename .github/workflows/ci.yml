@@ -238,6 +238,7 @@ jobs:
             docker/entrypoint.sh \
             docker/apt/use-package-snapshots \
             docker/evidence-sink/evidence-sink \
+            docker/permit-preflight/permit-preflight \
             docker/runtime/emit-runtime-manifest
       - name: Lint Dockerfile
         run: >-
@@ -339,6 +340,8 @@ jobs:
       OBSERVER_IMAGE: ghcr.io/${{ github.repository_owner }}/robotics-runtime-infra/acceptance-observer:ci
       BENCHMARK_IMAGE: ghcr.io/${{ github.repository_owner }}/robotics-runtime-infra/benchmark:ci
       EVIDENCE_IMAGE: ghcr.io/${{ github.repository_owner }}/robotics-runtime-infra/evidence-sink:ci
+      # yamllint disable-line rule:line-length
+      PERMIT_PREFLIGHT_IMAGE: ghcr.io/${{ github.repository_owner }}/robotics-runtime-infra/permit-preflight:ci
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
@@ -369,6 +372,55 @@ jobs:
           docker compose --profile test run --rm --no-deps inference-cpu-smoke
           docker run --rm "${OBSERVER_IMAGE}" robotics-acceptance --version
           docker run --rm "${EVIDENCE_IMAGE}" versions
+          docker run --rm "${PERMIT_PREFLIGHT_IMAGE}" versions
+      - name: Verify Cosign blob boundary and tamper rejection
+        env:
+          COSIGN_PASSWORD: test-only
+        run: |
+          work="${RUNNER_TEMP}/permit-crypto"
+          rm -rf "${work}"
+          mkdir -p "${work}"
+          chmod 0777 "${work}"
+          printf '{"fixture":"execution-permit"}' > "${work}/statement.json"
+          cosign=(
+            docker run --rm
+            --env COSIGN_PASSWORD
+            --volume "${work}:/work"
+            --workdir /work
+            --entrypoint /usr/local/bin/cosign
+            "${PERMIT_PREFLIGHT_IMAGE}"
+          )
+          "${cosign[@]}" signing-config create \
+            --no-default-fulcio \
+            --no-default-oidc \
+            --no-default-rekor \
+            --no-default-tsa \
+            --out offline-signing-config.json
+          "${cosign[@]}" generate-key-pair --output-key-prefix operator
+          "${cosign[@]}" sign-blob --yes \
+            --key operator.key \
+            --signing-config offline-signing-config.json \
+            --bundle operator.sigstore.json \
+            statement.json
+          docker run --rm \
+            --volume "${work}:/work:ro" \
+            "${PERMIT_PREFLIGHT_IMAGE}" \
+            verify-offline-test-bundle \
+            /work/statement.json \
+            /work/operator.sigstore.json \
+            /work/operator.pub
+          printf 'tampered\n' >> "${work}/statement.json"
+          if docker run --rm \
+            --volume "${work}:/work:ro" \
+            "${PERMIT_PREFLIGHT_IMAGE}" \
+            verify-offline-test-bundle \
+            /work/statement.json \
+            /work/operator.sigstore.json \
+            /work/operator.pub; then
+            printf 'tampered execution statement was accepted\n' >&2
+            exit 1
+          fi
+          rm -rf "${work}"
       - name: Verify CPU provider identity and tensor parity
         run: |
           report_dir="${PWD}/artifacts/provider-conformance/cpu"
@@ -594,7 +646,8 @@ jobs:
           for image in \
             "${SIMULATION_IMAGE}" "${EDGE_IMAGE}" "${SENSOR_IMAGE}" \
             "${INFERENCE_CPU_IMAGE}" "${OBSERVER_IMAGE}" \
-            "${BENCHMARK_IMAGE}" "${EVIDENCE_IMAGE}"; do
+            "${BENCHMARK_IMAGE}" "${EVIDENCE_IMAGE}" \
+            "${PERMIT_PREFLIGHT_IMAGE}"; do
             safe_name="$(tr '/:' '__' <<<"${image}")"
             if ! docker image inspect "${image}" \
               > "artifacts/runtime/${safe_name}.json"; then
@@ -622,7 +675,8 @@ jobs:
           for image in \
             "${SIMULATION_IMAGE}" "${EDGE_IMAGE}" "${SENSOR_IMAGE}" \
             "${INFERENCE_CPU_IMAGE}" "${OBSERVER_IMAGE}" \
-            "${BENCHMARK_IMAGE}" "${EVIDENCE_IMAGE}"; do
+            "${BENCHMARK_IMAGE}" "${EVIDENCE_IMAGE}" \
+            "${PERMIT_PREFLIGHT_IMAGE}"; do
             "${trivy[@]}" \
               --skip-db-update --ignore-unfixed \
               --severity HIGH,CRITICAL --exit-code 1 "${image}"

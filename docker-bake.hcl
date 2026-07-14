@@ -46,6 +46,14 @@ variable "RKNN_SOURCE" {
   default = "https://github.com/airockchip/rknn-toolkit2.git?tag=v2.3.2&checksum=42aa1d426c0a9e0869b6374edba009f7208a1926"
 }
 
+variable "COSIGN_SOURCE" {
+  default = "https://github.com/sigstore/cosign.git?tag=v3.1.1&checksum=7914231b348c4057891edeb321772aad3ed04fce"
+}
+
+variable "COSIGN_SOURCE_DATE_EPOCH" {
+  default = "1781007044"
+}
+
 group "default" {
   targets = ["simulation"]
 }
@@ -59,6 +67,7 @@ group "cpu" {
     "acceptance-observer",
     "benchmark-runtime",
     "evidence-sink",
+    "permit-preflight",
   ]
 }
 
@@ -70,6 +79,7 @@ group "multiarch" {
     "acceptance-observer",
     "benchmark-runtime",
     "evidence-sink",
+    "permit-preflight",
   ]
 }
 
@@ -386,4 +396,21 @@ target "evidence-sink" {
   target    = "evidence-sink"
   platforms = ["linux/amd64", "linux/arm64"]
   tags      = ["${REGISTRY}/robotics-runtime-infra/evidence-sink:${VERSION}"]
+}
+
+target "_cosign-source" {
+  inherits = ["_common"]
+  args = {
+    COSIGN_SOURCE_DATE_EPOCH = COSIGN_SOURCE_DATE_EPOCH
+  }
+  contexts = {
+    "cosign-source" = COSIGN_SOURCE
+  }
+}
+
+target "permit-preflight" {
+  inherits  = ["_cosign-source"]
+  target    = "permit-preflight"
+  platforms = ["linux/amd64", "linux/arm64"]
+  tags      = ["${REGISTRY}/robotics-runtime-infra/permit-preflight:${VERSION}"]
 }

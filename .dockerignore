@@ -13,6 +13,8 @@
 !docker/python/**
 !docker/evidence-sink/
 !docker/evidence-sink/**
+!docker/permit-preflight/
+!docker/permit-preflight/**
 !docker/runtime/
 !docker/runtime/**
 !test/

@@ -70,6 +70,10 @@ jobs:
             target: evidence-sink
             image: evidence-sink
             platforms: linux/amd64,linux/arm64
+          - id: permit-preflight
+            target: permit-preflight
+            image: permit-preflight
+            platforms: linux/amd64,linux/arm64
     env:
       IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/robotics-runtime-infra/${{ matrix.image }}
     steps:

@@ -1,0 +1,63 @@
+#!/bin/sh
+set -eu
+
+usage() {
+  cat >&2 <<'EOF'
+usage:
+  permit-preflight versions
+  permit-preflight verify-keyless-bundle STATEMENT BUNDLE TRUSTED_ROOT IDENTITY ISSUER
+  permit-preflight verify-offline-test-bundle STATEMENT BUNDLE PUBLIC_KEY
+EOF
+  exit 64
+}
+
+require_file() {
+  test -f "$1" && test -r "$1" || {
+    printf 'required file is not readable: %s\n' "$1" >&2
+    exit 66
+  }
+}
+
+command_name="${1:-}"
+case "${command_name}" in
+  versions)
+    test "$#" -eq 1 || usage
+    exec cosign version
+    ;;
+  verify-keyless-bundle)
+    test "$#" -eq 6 || usage
+    statement="$2"
+    bundle="$3"
+    trusted_root="$4"
+    identity="$5"
+    issuer="$6"
+    require_file "${statement}"
+    require_file "${bundle}"
+    require_file "${trusted_root}"
+    test -n "${identity}" || usage
+    test -n "${issuer}" || usage
+    exec cosign verify-blob \
+      --bundle "${bundle}" \
+      --trusted-root "${trusted_root}" \
+      --certificate-identity "${identity}" \
+      --certificate-oidc-issuer "${issuer}" \
+      "${statement}"
+    ;;
+  verify-offline-test-bundle)
+    test "$#" -eq 4 || usage
+    statement="$2"
+    bundle="$3"
+    public_key="$4"
+    require_file "${statement}"
+    require_file "${bundle}"
+    require_file "${public_key}"
+    exec cosign verify-blob \
+      --bundle "${bundle}" \
+      --key "${public_key}" \
+      --insecure-ignore-tlog \
+      "${statement}"
+    ;;
+  *)
+    usage
+    ;;
+esac

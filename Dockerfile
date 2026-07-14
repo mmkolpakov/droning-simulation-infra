@@ -166,6 +166,46 @@ ADD --checksum=sha256:a6adb750d17c8eb3c50a5b063115c762ffe57724cfbd45cc38e5abe823
   https://github.com/intel/compute-runtime/releases/download/24.48.31907.7/libigdgmm12_22.5.4_amd64.deb \
   /packages/libigdgmm12_22.5.4_amd64.deb
 
+# Rebuild the signed Cosign release source with the patched Go toolchain. The
+# upstream v3.1.1 image was built with Go 1.26.3.
+FROM --platform=${BUILDPLATFORM} ${GO_BUILDER_IMAGE} AS cosign
+ARG TARGETOS
+ARG TARGETARCH
+ARG COSIGN_REVISION=7914231b348c4057891edeb321772aad3ed04fce
+ARG COSIGN_SOURCE_DATE_EPOCH=1781007044
+ARG COSIGN_VERSION=v3.1.1
+# hadolint ignore=DL3022
+COPY --from=cosign-source / /src/cosign
+WORKDIR /src/cosign
+RUN --mount=type=cache,id=cosign-v3.1.1-mod,target=/go/pkg/mod,sharing=locked \
+    --mount=type=cache,id=cosign-v3.1.1-build,target=/root/.cache/go-build,sharing=locked \
+    test "$(sed -n 's/^module //p' go.mod)" = \
+      "github.com/sigstore/cosign/v3" \
+    && test "$(sed -n 's/^go //p' go.mod)" = "1.26.0" \
+    && test "${COSIGN_REVISION}" = \
+      "7914231b348c4057891edeb321772aad3ed04fce" \
+    && test "${COSIGN_SOURCE_DATE_EPOCH}" = "1781007044" \
+    && go mod download \
+    && go mod verify \
+    && CGO_ENABLED=0 \
+      GOOS="${TARGETOS}" \
+      GOARCH="${TARGETARCH}" \
+      go build \
+        -trimpath \
+        -ldflags "-buildid= \
+          -X sigs.k8s.io/release-utils/version.gitVersion=${COSIGN_VERSION} \
+          -X sigs.k8s.io/release-utils/version.gitCommit=${COSIGN_REVISION} \
+          -X sigs.k8s.io/release-utils/version.gitTreeState=clean \
+          -X sigs.k8s.io/release-utils/version.buildDate=2026-06-09T12:10:44Z" \
+        -o /out/cosign \
+        ./cmd/cosign \
+    && install -m 0444 LICENSE /out/LICENSE \
+    && printf '%s\n' \
+      "cosign=${COSIGN_VERSION}" \
+      "revision=${COSIGN_REVISION}" \
+      "go=$(go version | awk '{print $3}')" \
+      > /out/source.txt
+
 # Rebuild the exact yq release source with the patched Go toolchain. The
 # upstream release binary was built with a Go standard library below 1.26.5.
 FROM --platform=${BUILDPLATFORM} ${GO_BUILDER_IMAGE} AS yq
@@ -247,6 +287,42 @@ RUN chmod 0555 /mcap
 ARG TARGETARCH
 # hadolint ignore=DL3006
 FROM mcap-${TARGETARCH} AS mcap
+
+FROM ubuntu-ca AS permit-preflight
+
+ARG IMAGE_CREATED=1970-01-01T00:00:00Z
+ARG IMAGE_SOURCE=https://github.com/mmkolpakov/robotics-runtime-infra
+ARG IMAGE_VERSION=0.5.0
+ARG VCS_REF=local
+
+LABEL org.opencontainers.image.title="Robotics execution permit preflight" \
+      org.opencontainers.image.description="Exact-identity Sigstore bundle verification for physical runtime permits." \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.created="${IMAGE_CREATED}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.source="${IMAGE_SOURCE}" \
+      org.opencontainers.image.licenses="MIT AND Apache-2.0"
+
+ENV HOME=/home/preflight
+
+COPY --from=cosign /out/cosign /usr/local/bin/cosign
+COPY --from=cosign /out/LICENSE /usr/share/licenses/cosign/LICENSE
+COPY --from=cosign /out/source.txt /usr/share/robotics-runtime/cosign-source.txt
+COPY --chmod=0555 docker/permit-preflight/permit-preflight /usr/local/bin/permit-preflight
+
+RUN groupadd --gid 10002 preflight \
+    && useradd --uid 10002 --gid 10002 --create-home preflight \
+    && mkdir -p /work \
+    && chown 10002:10002 /work
+
+USER preflight
+WORKDIR /work
+
+ENTRYPOINT ["/usr/local/bin/permit-preflight"]
+CMD ["versions"]
+
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+  CMD ["/usr/local/bin/permit-preflight", "versions"]
 
 FROM ubuntu-ca AS evidence-sink
 
