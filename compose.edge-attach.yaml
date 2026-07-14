@@ -132,9 +132,9 @@ services:
       physical-permit-preflight:
         condition: service_completed_successfully
 
-  hil-observer:
+  physical-observer-template:
     <<: *edge-attach-observer
-    profiles: [hil]
+    profiles: [_physical-observer-template]
     command:
       - robotics-acceptance
       - verify
@@ -207,6 +207,11 @@ services:
         condition: service_completed_successfully
       physical-runtime-manifest:
         condition: service_completed_successfully
+
+  hil-observer:
+    extends:
+      service: physical-observer-template
+    profiles: [hil]
 
 networks:
   robotics-attach:

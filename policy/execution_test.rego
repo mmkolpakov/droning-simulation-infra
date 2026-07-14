@@ -9,6 +9,16 @@ violations(candidate) := result if {
 	result := execution.deny with input as candidate with time.now_ns as fixed_now
 }
 
+valid_real_observation := json.patch(data.execution_valid, [
+	{"op": "replace", "path": "/permit/target/environment", "value": "real_robot"},
+	{"op": "replace", "path": "/permit/allowed_physical_effect", "value": "observation"},
+	{"op": "replace", "path": "/statement/predicate/target/environment", "value": "real_robot"},
+	{"op": "replace", "path": "/statement/predicate/allowed_physical_effect", "value": "observation"},
+	{"op": "replace", "path": "/trust_policy/targets/0/environments", "value": ["real_robot"]},
+	{"op": "replace", "path": "/request/target/environment", "value": "real_robot"},
+	{"op": "replace", "path": "/request/allowed_physical_effect", "value": "observation"},
+])
+
 test_valid_hil_permit_is_allowed if {
 	count(violations(data.execution_valid)) == 0
 }
@@ -19,6 +29,19 @@ test_valid_hil_permit_emits_verification if {
 	verification.decision == "allow"
 	verification.verified_at == "2026-07-14T12:00:00Z"
 	count(verification.signers) == 2
+}
+
+test_valid_real_observation_permit_is_allowed if {
+	count(violations(valid_real_observation)) == 0
+}
+
+test_real_observation_actuation_is_denied if {
+	candidate := json.patch(valid_real_observation, [
+		{"op": "replace", "path": "/permit/allowed_physical_effect", "value": "actuation"},
+		{"op": "replace", "path": "/statement/predicate/allowed_physical_effect", "value": "actuation"},
+		{"op": "replace", "path": "/request/allowed_physical_effect", "value": "actuation"},
+	])
+	"real-target permits must be observation-only" in violations(candidate)
 }
 
 test_expired_permit_is_denied if {

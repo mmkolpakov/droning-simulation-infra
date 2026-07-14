@@ -120,6 +120,15 @@ jobs:
             -f compose.edge-attach.yaml \
             -f compose.real-observation.yaml \
             --profile real-observation config --quiet
+          docker compose \
+            -f compose.yaml \
+            -f compose.edge-attach.yaml \
+            -f compose.real-observation.yaml \
+            -f compose.real-observation.test.yaml \
+            --profile real-observation \
+            --profile real-observation-test \
+            --profile real-observation-test-negative \
+            config --quiet
       - name: Build the pinned policy engine
         env:
           REGISTRY: local
@@ -277,9 +286,10 @@ jobs:
             .networks["robotics-attach"].external == true and
             .services["physical-permit-preflight"].network_mode == "none" and
             .services["physical-runtime-manifest"].network_mode == "none" and
-            .services["real-observation-observer"].profiles == [
-              "real-observation"
-            ] and
+            (.services["real-observation-observer"].profiles |
+              index("real-observation")) != null and
+            (.services["real-observation-observer"].profiles |
+              index("hil")) == null and
             .services["real-observation-observer"].network_mode ==
               "service:edge-attach-data-plane" and
             .services["real-observation-observer"].environment.ROS_SECURITY_ENABLE ==
@@ -601,6 +611,15 @@ jobs:
             -f compose.edge-attach.yaml \
             -f compose.real-observation.yaml \
             --profile real-observation config --quiet
+          docker compose \
+            -f compose.yaml \
+            -f compose.edge-attach.yaml \
+            -f compose.real-observation.yaml \
+            -f compose.real-observation.test.yaml \
+            --profile real-observation \
+            --profile real-observation-test \
+            --profile real-observation-test-negative \
+            config --quiet
 
   integration:
     runs-on: ubuntu-24.04
@@ -1252,18 +1271,37 @@ jobs:
             ' "${result_dir}/subscriber.json"
           done
       - name: Verify SROS2 enforcement
+        env:
+          # Configuration-only fixture; production uses the verified image digest.
+          ROBOTICS_COSIGN_IMAGE_DIGEST: sha256:4444444444444444444444444444444444444444444444444444444444444444
         run: |
           work_dir="${PWD}/artifacts/security-runtime"
           project="security-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          real_project="${project}-real-observation"
+          real_network="${real_project}-network"
           mkdir -p "${work_dir}"
           sudo chown -R 1000:1000 "${work_dir}"
+          export ROS_DOMAIN_ID=92
           export ROBOTICS_SECURITY_WORK_DIR="${work_dir}"
           compose=(
             docker compose -p "${project}"
             -f compose.yaml
             -f compose.security.yaml
           )
+          real_compose=(
+            docker compose -p "${real_project}"
+            -f compose.yaml
+            -f compose.edge-attach.yaml
+            -f compose.real-observation.yaml
+            -f compose.real-observation.test.yaml
+          )
           cleanup() {
+            "${real_compose[@]}" \
+              --profile real-observation \
+              --profile real-observation-test \
+              --profile real-observation-test-negative \
+              down --volumes --remove-orphans || true
+            docker network rm "${real_network}" >/dev/null 2>&1 || true
             "${compose[@]}" \
               --profile security --profile security-init \
               --profile security-verify --profile security-negative \
@@ -1300,6 +1338,81 @@ jobs:
             down --volumes --remove-orphans
           "${compose[@]}" --profile security-observer-negative \
             run --rm secure-observer-denied-command
+
+          sudo install -d -o 1000 -g 1000 -m 0770 \
+            "${work_dir}/real/input" \
+            "${work_dir}/real/authorization" \
+            "${work_dir}/real/authorization-output" \
+            "${work_dir}/real/evidence" \
+            "${work_dir}/real/nonces" \
+            "${work_dir}/real/results"
+          export OBSERVER_IMAGE="${BENCHMARK_IMAGE}"
+          export ROBOTICS_ATTACH_NETWORK="${real_network}"
+          export ROBOTICS_RUN_INPUT_DIR="${work_dir}/real/input"
+          export ROBOTICS_AUTHORIZATION_DIR="${work_dir}/real/authorization"
+          export ROBOTICS_AUTHORIZATION_OUTPUT_DIR="${work_dir}/real/authorization-output"
+          export ROBOTICS_EVIDENCE_DIR="${work_dir}/real/evidence"
+          export ROBOTICS_NONCE_DIR="${work_dir}/real/nonces"
+          export ROBOTICS_RESULTS_DIR="${work_dir}/real/results"
+          docker network create --driver bridge --internal "${real_network}"
+          "${real_compose[@]}" \
+            --profile real-observation \
+            --profile real-observation-test \
+            up --detach edge-attach-data-plane real-observation-test-source
+          "${real_compose[@]}" --profile real-observation \
+            run --rm --no-deps real-observation-observer \
+            bash -Eeu -c '
+              timeout 20 ros2 run demo_nodes_cpp listener \
+                --ros-args \
+                --enclave /robotics/observer \
+                --remap __node:=robotics_acceptance_observer \
+                --remap chatter:=/robotics/telemetry 2>&1 | \
+                grep --max-count=1 "I heard:"
+            '
+          "${real_compose[@]}" --profile real-observation \
+            run --rm --no-deps real-observation-observer \
+            bash -Eeuo pipefail -c '
+              set +e
+              output="$(timeout 10 ros2 run demo_nodes_cpp talker \
+                --ros-args \
+                --enclave /robotics/observer \
+                --remap __node:=robotics_acceptance_observer \
+                --remap chatter:=/cmd_vel 2>&1)"
+              status="$?"
+              set -e
+              printf "%s\n" "${output}"
+              test "${status}" -ne 0
+              grep -Eqi "permission|not allowed|denied|create publisher" \
+                <<<"${output}"
+            '
+          "${real_compose[@]}" \
+            --profile real-observation \
+            --profile real-observation-test \
+            stop real-observation-test-source
+          "${real_compose[@]}" \
+            --profile real-observation \
+            --profile real-observation-test \
+            rm --force real-observation-test-source
+          "${real_compose[@]}" \
+            --profile real-observation \
+            --profile real-observation-test-negative \
+            up --detach \
+            edge-attach-data-plane real-observation-test-unsecured-source
+          "${real_compose[@]}" --profile real-observation \
+            run --rm --no-deps real-observation-observer \
+            bash -Eeuo pipefail -c '
+              set +e
+              output="$(timeout 8 ros2 run demo_nodes_cpp listener \
+                --ros-args \
+                --enclave /robotics/observer \
+                --remap __node:=robotics_acceptance_observer \
+                --remap chatter:=/robotics/telemetry 2>&1)"
+              status="$?"
+              set -e
+              printf "%s\n" "${output}"
+              test "${status}" -eq 124
+              ! grep -q "I heard:" <<<"${output}"
+            '
       - name: Verify versioned S3 evidence
         run: |
           evidence_dir="${PWD}/artifacts/evidence-s3"

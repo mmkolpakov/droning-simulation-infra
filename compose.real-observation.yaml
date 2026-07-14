@@ -3,8 +3,8 @@ services:
   real-observation-observer:
     extends:
       file: compose.edge-attach.yaml
-      service: hil-observer
-    profiles: !override [real-observation]
+      service: physical-observer-template
+    profiles: [real-observation]
     labels:
       org.opencontainers.image.description: >-
         Permit-gated SROS2 observer for a real robotics target
