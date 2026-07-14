@@ -85,6 +85,7 @@ behavior being tested:
 | `compose.benchmark.yaml` | `benchmark` | Measure UDP, SHM, or Data Sharing with `performance_test` |
 | `compose.security.yaml` | `security*` | SROS2 Enforce, observer-only enclave, positive and denial checks |
 | `compose.stepped.yaml` | `stepped` | Run Gazebo paused and advance it through `WorldControl` |
+| `compose.edge-attach.yaml` | `edge-attach`, `hil` | Attach-only observation through an external Docker network; HIL is permit-gated and SROS2-enforced |
 
 For example, verify the packaged golden MCAP without starting Gazebo:
 

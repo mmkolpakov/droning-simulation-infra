@@ -66,12 +66,15 @@ jobs:
           docker buildx bake --print rknn >/dev/null
           docker buildx bake --print policy-tooling >/dev/null
       - name: Validate Compose models
+        env:
+          # Configuration-only fixture; production must use the published image digest.
+          ROBOTICS_COSIGN_IMAGE_DIGEST: sha256:4444444444444444444444444444444444444444444444444444444444444444
         run: |
           docker compose --profile test --profile acceptance config --quiet
           overlays=(
             compose.playback.yaml compose.record.yaml compose.evidence.yaml
             compose.high-throughput.yaml compose.benchmark.yaml
-            compose.security.yaml compose.stepped.yaml
+            compose.security.yaml compose.stepped.yaml compose.edge-attach.yaml
             compose.amd.yaml compose.intel.yaml compose.nvidia.yaml
             compose.nvidia-jetson.yaml
             compose.rknn.yaml
@@ -93,7 +96,8 @@ jobs:
             --profile security --profile security-init
             --profile security-verify --profile security-negative
             --profile security-observer --profile security-observer-negative
-            --profile stepped
+            --profile stepped --profile simulation
+            --profile edge-attach --profile hil
           )
           for overlay in "${overlays[@]}"; do
             docker compose -f compose.yaml -f "${overlay}" \
@@ -115,6 +119,9 @@ jobs:
           docker run --rm \
             local/robotics-runtime-infra/policy-tooling:ci version
       - name: Enforce policy as code
+        env:
+          # Configuration-only fixture; production must use the published image digest.
+          ROBOTICS_COSIGN_IMAGE_DIGEST: sha256:4444444444444444444444444444444444444444444444444444444444444444
         run: |
           mkdir -p tmp
           docker compose --profile test --profile acceptance \
@@ -169,6 +176,57 @@ jobs:
                   validate_document(json.load(source))
           PY
           test "$(policy_deny_count policy/compose.rego compose tmp/compose.json)" -eq 0
+          docker compose \
+            -f compose.yaml \
+            -f compose.edge-attach.yaml \
+            --profile edge-attach \
+            config --format json --output tmp/edge-attach-compose.json
+          docker compose \
+            -f compose.yaml \
+            -f compose.edge-attach.yaml \
+            --profile hil \
+            config --format json --output tmp/hil-compose.json
+          jq -e '
+            (.services | keys | sort) == [
+              "edge-attach-data-plane",
+              "edge-attach-observer"
+            ] and
+            .networks["robotics-attach"].external == true and
+            .services["edge-attach-observer"].network_mode ==
+              "service:edge-attach-data-plane"
+          ' tmp/edge-attach-compose.json >/dev/null
+          jq -e '
+            (.services | keys | sort) == [
+              "edge-attach-data-plane",
+              "hil-observer",
+              "hil-permit-preflight",
+              "hil-runtime-manifest"
+            ] and
+            .networks["robotics-attach"].external == true and
+            .services["hil-permit-preflight"].network_mode == "none" and
+            .services["hil-runtime-manifest"].network_mode == "none" and
+            .services["hil-observer"].network_mode ==
+              "service:edge-attach-data-plane" and
+            .services["hil-observer"].environment.ROS_SECURITY_STRATEGY ==
+              "Enforce" and
+            .services["hil-observer"].depends_on["hil-permit-preflight"].condition ==
+              "service_completed_successfully" and
+            .services["hil-observer"].depends_on["hil-runtime-manifest"].condition ==
+              "service_completed_successfully" and
+            all(.services[];
+              (.privileged // false) == false and
+              (.devices // []) == [] and
+              (.device_cgroup_rules // []) == [] and
+              .network_mode != "host"
+            )
+          ' tmp/hil-compose.json >/dev/null
+          test "$(
+            policy_deny_count \
+              policy/compose.rego compose tmp/edge-attach-compose.json
+          )" -eq 0
+          test "$(
+            policy_deny_count policy/compose.rego compose tmp/hil-compose.json
+          )" -eq 0
           "${yq[@]}" -o=json test/acceptance/stepped-smoke.yaml \
             > tmp/stepped-smoke.json
           test "$(policy_deny_count policy/scenario.rego scenario tmp/stepped-smoke.json)" -eq 0
@@ -338,6 +396,9 @@ jobs:
           actual="v$(docker compose version --short | sed 's/^v//')"
           test "${actual}" = "${{ matrix.version }}"
       - name: Validate every overlay
+        env:
+          # Configuration-only fixture; production must use the published image digest.
+          ROBOTICS_COSIGN_IMAGE_DIGEST: sha256:4444444444444444444444444444444444444444444444444444444444444444
         run: |
           profiles=(
             --profile test --profile acceptance --profile playback
@@ -356,12 +417,13 @@ jobs:
             --profile security --profile security-init
             --profile security-verify --profile security-negative
             --profile security-observer --profile security-observer-negative
-            --profile stepped
+            --profile stepped --profile simulation
+            --profile edge-attach --profile hil
           )
           overlays=(
             compose.playback.yaml compose.record.yaml compose.evidence.yaml
             compose.high-throughput.yaml compose.benchmark.yaml
-            compose.security.yaml compose.stepped.yaml
+            compose.security.yaml compose.stepped.yaml compose.edge-attach.yaml
             compose.amd.yaml compose.intel.yaml compose.nvidia.yaml
             compose.nvidia-jetson.yaml
             compose.rknn.yaml
@@ -475,6 +537,124 @@ jobs:
             exit 1
           fi
           rm -rf "${work}"
+      - name: Verify physical runtime manifest materialization
+        run: |
+          work="${RUNNER_TEMP}/runtime-materialization"
+          rm -rf "${work}"
+          mkdir -p "${work}"
+          chmod 0777 "${work}"
+          jq '.execution_valid.permit' \
+            test/policy/execution/valid.json > "${work}/permit.json"
+          jq '.execution_valid.trust_policy' \
+            test/policy/execution/valid.json > "${work}/trust-policy.json"
+          jq '.execution_valid' \
+            test/policy/execution/valid.json > "${work}/execution-input.json"
+          docker run --rm \
+            --volume "${work}:/work" \
+            --entrypoint /usr/local/bin/opa \
+            "${PERMIT_PREFLIGHT_IMAGE}" \
+            eval \
+            --fail \
+            --format raw \
+            --data /usr/share/robotics-runtime/policy/execution.rego \
+            --input /work/execution-input.json \
+            'data.execution.verification with time.now_ns as time.parse_rfc3339_ns("2026-07-14T12:00:00Z")' \
+            > "${work}/verification.json"
+          docker run --rm \
+            --volume "${PWD}/test/physical:/fixtures:ro" \
+            --volume "${work}:/work" \
+            "${PERMIT_PREFLIGHT_IMAGE}" \
+            materialize-runtime \
+            /fixtures/hil-runtime.input.json \
+            /work/permit.json \
+            /work/verification.json \
+            /work/trust-policy.json \
+            /work/runtime-manifest.json
+          permit_sha256="$(sha256sum "${work}/permit.json" | awk '{print $1}')"
+          verification_sha256="$(
+            sha256sum "${work}/verification.json" | awk '{print $1}'
+          )"
+          trust_policy_sha256="$(
+            sha256sum "${work}/trust-policy.json" | awk '{print $1}'
+          )"
+          jq -e \
+            --arg permit "${permit_sha256}" \
+            --arg verification "${verification_sha256}" \
+            --arg trust "${trust_policy_sha256}" '
+              .schema_version == "runtime-manifest.v3" and
+              .authorization.mode == "verified_execution_permit" and
+              .authorization.permit_sha256 == $permit and
+              .authorization.execution_verification_sha256 == $verification and
+              .authorization.trust_policy_sha256 == $trust
+            ' "${work}/runtime-manifest.json" >/dev/null
+          if docker run --rm \
+            --volume "${PWD}/test/physical:/fixtures:ro" \
+            --volume "${work}:/work" \
+            "${PERMIT_PREFLIGHT_IMAGE}" \
+            materialize-runtime \
+            /fixtures/hil-runtime.input.json \
+            /work/permit.json \
+            /work/verification.json \
+            /work/trust-policy.json \
+            /work/runtime-manifest.json; then
+            printf 'existing runtime manifest was overwritten\n' >&2
+            exit 1
+          fi
+          rm -rf "${work}"
+      - name: Verify edge attach lifecycle without physical execution
+        env:
+          ROBOTICS_COSIGN_IMAGE_DIGEST: sha256:4444444444444444444444444444444444444444444444444444444444444444
+        run: |
+          project="edge-attach-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          network="${project}-network"
+          work="${RUNNER_TEMP}/${project}"
+          mkdir -p \
+            "${work}/input" \
+            "${work}/authorization" \
+            "${work}/authorization-output" \
+            "${work}/nonces" \
+            "${work}/results" \
+            "${work}/security/keystore/public" \
+            "${work}/security/keystore/enclaves/robotics/observer"
+          touch "${work}/security/keystore/enclaves/governance.p7s"
+          chmod -R 0777 "${work}"
+          export ROBOTICS_ATTACH_NETWORK="${network}"
+          export ROBOTICS_RUN_INPUT_DIR="${work}/input"
+          export ROBOTICS_AUTHORIZATION_DIR="${work}/authorization"
+          export ROBOTICS_AUTHORIZATION_OUTPUT_DIR="${work}/authorization-output"
+          export ROBOTICS_NONCE_DIR="${work}/nonces"
+          export ROBOTICS_RESULTS_DIR="${work}/results"
+          export ROBOTICS_SECURITY_WORK_DIR="${work}/security"
+          compose=(
+            docker compose -p "${project}"
+            -f compose.yaml
+            -f compose.edge-attach.yaml
+          )
+          cleanup() {
+            "${compose[@]}" --profile hil \
+              down --volumes --remove-orphans || true
+            docker network rm "${network}" >/dev/null 2>&1 || true
+            rm -rf "${work}"
+          }
+          trap cleanup EXIT
+          docker network create --driver bridge --internal "${network}"
+          "${compose[@]}" --profile hil up --no-build --no-start
+          mapfile -t services < <(
+            "${compose[@]}" --profile hil ps --all --services | sort
+          )
+          expected=(
+            edge-attach-data-plane
+            hil-observer
+            hil-permit-preflight
+            hil-runtime-manifest
+          )
+          test "${services[*]}" = "${expected[*]}"
+          "${compose[@]}" --profile hil down --volumes --remove-orphans
+          docker network inspect "${network}" >/dev/null
+          test -z "$(
+            docker ps --all --quiet \
+              --filter "label=com.docker.compose.project=${project}"
+          )"
       - name: Verify CPU provider identity and tensor parity
         run: |
           report_dir="${PWD}/artifacts/provider-conformance/cpu"

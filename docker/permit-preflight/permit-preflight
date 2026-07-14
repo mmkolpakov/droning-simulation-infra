@@ -8,6 +8,7 @@ usage:
   permit-preflight verify-keyless-bundle STATEMENT BUNDLE TRUSTED_ROOT IDENTITY ISSUER
   permit-preflight verify-offline-test-bundle STATEMENT BUNDLE PUBLIC_KEY
   permit-preflight authorize PERMIT STATEMENT OPERATOR_BUNDLE APPROVER_BUNDLE TRUSTED_ROOT TRUST_POLICY REQUEST NONCE_DIR OUTPUT COSIGN_IMAGE_DIGEST
+  permit-preflight materialize-runtime TEMPLATE PERMIT VERIFICATION TRUST_POLICY OUTPUT
 EOF
   exit 64
 }
@@ -283,6 +284,59 @@ case "${command_name}" in
     printf '%s\n' "${permit_sha256}" \
       > "${nonce_dir}/${nonce}/permit_sha256"
     chmod 0444 "${nonce_dir}/${nonce}/permit_sha256"
+    chmod 0444 "${output_tmp}"
+    mv "${output_tmp}" "${output}"
+    output_tmp=
+    ;;
+  materialize-runtime)
+    test "$#" -eq 6 || usage
+    template="$2"
+    permit="$3"
+    verification="$4"
+    trust_policy="$5"
+    output="$6"
+
+    for required in \
+      "${template}" \
+      "${permit}" \
+      "${verification}" \
+      "${trust_policy}"; do
+      require_file "${required}"
+    done
+    test ! -e "${output}" && test ! -L "${output}" || {
+      printf 'runtime manifest output already exists: %s\n' "${output}" >&2
+      exit 73
+    }
+    output_dir="$(dirname "${output}")"
+    test -d "${output_dir}" && test -w "${output_dir}" || {
+      printf 'runtime manifest output directory is not writable: %s\n' \
+        "${output_dir}" >&2
+      exit 73
+    }
+
+    validate_contract "${template}"
+    validate_contract "${permit}"
+    validate_contract "${verification}"
+    permit_sha256="$(sha256_file "${permit}")"
+    verification_sha256="$(sha256_file "${verification}")"
+    trust_policy_sha256="$(sha256_file "${trust_policy}")"
+    generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    output_tmp="$(mktemp "${output}.tmp.XXXXXX")"
+    trap 'rm -f "${output_tmp}"' EXIT HUP INT TERM
+    GENERATED_AT="${generated_at}" \
+      PERMIT_SHA256="${permit_sha256}" \
+      VERIFICATION_SHA256="${verification_sha256}" \
+      TRUST_POLICY_SHA256="${trust_policy_sha256}" \
+      yq -o=json -I=2 '
+        .generated_at = strenv(GENERATED_AT) |
+        .authorization.mode = "verified_execution_permit" |
+        .authorization.permit_sha256 = strenv(PERMIT_SHA256) |
+        .authorization.execution_verification_sha256 =
+          strenv(VERIFICATION_SHA256) |
+        .authorization.trust_policy_sha256 = strenv(TRUST_POLICY_SHA256)
+      ' "${template}" > "${output_tmp}"
+    validate_contract "${output_tmp}"
     chmod 0444 "${output_tmp}"
     mv "${output_tmp}" "${output}"
     output_tmp=

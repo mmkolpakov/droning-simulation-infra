@@ -402,6 +402,8 @@ COPY docker/python/permit-preflight.lock /tmp/python/permit-preflight.lock
 COPY --chmod=0444 policy/execution.rego /usr/share/robotics-runtime/policy/execution.rego
 COPY --chmod=0555 docker/permit-preflight/permit-preflight /usr/local/bin/permit-preflight
 
+RUN chmod 0555 /usr/share/robotics-runtime/policy
+
 RUN export DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC \
     && UBUNTU_SNAPSHOT="${UBUNTU_SNAPSHOT}" \
       /usr/local/sbin/use-package-snapshots \
@@ -433,6 +435,9 @@ RUN export DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC \
 
 USER preflight
 WORKDIR /work
+
+RUN test -r /usr/share/robotics-runtime/policy/execution.rego \
+    && opa fmt --list --fail /usr/share/robotics-runtime/policy/execution.rego
 
 ENTRYPOINT ["/usr/local/bin/permit-preflight"]
 CMD ["versions"]
