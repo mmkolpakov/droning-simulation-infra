@@ -115,6 +115,11 @@ jobs:
             -f compose.evidence.yaml \
             -f compose.evidence.test.yaml \
             "${profiles[@]}" config --quiet
+          docker compose \
+            -f compose.yaml \
+            -f compose.edge-attach.yaml \
+            -f compose.real-observation.yaml \
+            --profile real-observation config --quiet
       - name: Build the pinned policy engine
         env:
           REGISTRY: local
@@ -198,6 +203,12 @@ jobs:
             config --format json --output tmp/hil-compose.json
           docker compose \
             -f compose.yaml \
+            -f compose.edge-attach.yaml \
+            -f compose.real-observation.yaml \
+            --profile real-observation \
+            config --format json --output tmp/real-observation-compose.json
+          docker compose \
+            -f compose.yaml \
             -f compose.serial.yaml \
             --profile serial-preflight \
             config --format json --output tmp/serial-compose.json
@@ -227,12 +238,12 @@ jobs:
             (.services | keys | sort) == [
               "edge-attach-data-plane",
               "hil-observer",
-              "hil-permit-preflight",
-              "hil-runtime-manifest"
+              "physical-permit-preflight",
+              "physical-runtime-manifest"
             ] and
             .networks["robotics-attach"].external == true and
-            .services["hil-permit-preflight"].network_mode == "none" and
-            .services["hil-runtime-manifest"].network_mode == "none" and
+            .services["physical-permit-preflight"].network_mode == "none" and
+            .services["physical-runtime-manifest"].network_mode == "none" and
             .services["hil-observer"].network_mode ==
               "service:edge-attach-data-plane" and
             .services["hil-observer"].environment.ROS_SECURITY_STRATEGY ==
@@ -244,9 +255,9 @@ jobs:
             any(.services["hil-observer"].volumes[];
               .target == "/evidence" and .read_only == true
             ) and
-            .services["hil-observer"].depends_on["hil-permit-preflight"].condition ==
+            .services["hil-observer"].depends_on["physical-permit-preflight"].condition ==
               "service_completed_successfully" and
-            .services["hil-observer"].depends_on["hil-runtime-manifest"].condition ==
+            .services["hil-observer"].depends_on["physical-runtime-manifest"].condition ==
               "service_completed_successfully" and
             all(.services[];
               (.privileged // false) == false and
@@ -255,6 +266,52 @@ jobs:
               .network_mode != "host"
             )
           ' tmp/hil-compose.json >/dev/null
+          jq -e '
+            (.services | keys | sort) == [
+              "edge-attach-data-plane",
+              "physical-permit-preflight",
+              "physical-runtime-manifest",
+              "real-observation-observer"
+            ] and
+            (.services | has("simulation") | not) and
+            .networks["robotics-attach"].external == true and
+            .services["physical-permit-preflight"].network_mode == "none" and
+            .services["physical-runtime-manifest"].network_mode == "none" and
+            .services["real-observation-observer"].profiles == [
+              "real-observation"
+            ] and
+            .services["real-observation-observer"].network_mode ==
+              "service:edge-attach-data-plane" and
+            .services["real-observation-observer"].environment.ROS_SECURITY_ENABLE ==
+              "true" and
+            .services["real-observation-observer"].environment.ROS_SECURITY_STRATEGY ==
+              "Enforce" and
+            .services["real-observation-observer"].environment.ROS_SECURITY_ENCLAVE_OVERRIDE ==
+              "/robotics/observer" and
+            .services["real-observation-observer"].labels[
+              "org.robotics-runtime.execution.environment"
+            ] == "real_robot" and
+            .services["real-observation-observer"].labels[
+              "org.robotics-runtime.execution.physical-effect"
+            ] == "observation" and
+            .services["real-observation-observer"].depends_on[
+              "physical-permit-preflight"
+            ].condition == "service_completed_successfully" and
+            .services["real-observation-observer"].depends_on[
+              "physical-runtime-manifest"
+            ].condition == "service_completed_successfully" and
+            all(.services[];
+              (.privileged // false) == false and
+              (.devices // []) == [] and
+              (.device_cgroup_rules // []) == [] and
+              (.ports // []) == [] and
+              (.cap_add // []) == [] and
+              .cap_drop == ["ALL"] and
+              .network_mode != "host" and
+              .ipc != "host" and
+              .pid != "host"
+            )
+          ' tmp/real-observation-compose.json >/dev/null
           jq -e '
             (.services | keys) == ["serial-device-preflight"] and
             .services["serial-device-preflight"].network_mode == "none" and
@@ -307,6 +364,10 @@ jobs:
           )" -eq 0
           test "$(
             policy_deny_count policy/compose.rego compose tmp/hil-compose.json
+          )" -eq 0
+          test "$(
+            policy_deny_count \
+              policy/compose.rego compose tmp/real-observation-compose.json
           )" -eq 0
           test "$(
             policy_deny_count policy/compose.rego compose tmp/serial-compose.json
@@ -535,6 +596,11 @@ jobs:
             -f compose.evidence.yaml \
             -f compose.evidence.test.yaml \
             "${profiles[@]}" config --quiet
+          docker compose \
+            -f compose.yaml \
+            -f compose.edge-attach.yaml \
+            -f compose.real-observation.yaml \
+            --profile real-observation config --quiet
 
   integration:
     runs-on: ubuntu-24.04
@@ -1022,8 +1088,8 @@ jobs:
           expected=(
             edge-attach-data-plane
             hil-observer
-            hil-permit-preflight
-            hil-runtime-manifest
+            physical-permit-preflight
+            physical-runtime-manifest
           )
           test "${services[*]}" = "${expected[*]}"
           "${compose[@]}" --profile hil down --volumes --remove-orphans

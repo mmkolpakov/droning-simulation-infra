@@ -102,6 +102,60 @@ deny contains message if {
 	message := sprintf("service %q contains CAN transmit or bidirectional tooling", [name])
 }
 
+deny contains message if {
+	some name, service in input.services
+	real_observation_profile(service)
+	count(object.get(service, "devices", [])) > 0
+	message := sprintf("service %q exposes a device in the real observation profile", [name])
+}
+
+deny contains message if {
+	some name, service in input.services
+	real_observation_profile(service)
+	count(object.get(service, "device_cgroup_rules", [])) > 0
+	message := sprintf("service %q adds a device cgroup rule in the real observation profile", [name])
+}
+
+deny contains message if {
+	some name, service in input.services
+	real_observation_profile(service)
+	count(object.get(service, "ports", [])) > 0
+	message := sprintf("service %q publishes a port in the real observation profile", [name])
+}
+
+deny contains message if {
+	some name, service in input.services
+	real_observation_profile(service)
+	some volume in object.get(service, "volumes", [])
+	startswith(volume_source(volume), "/dev")
+	message := sprintf("service %q mounts a device path in the real observation profile", [name])
+}
+
+deny contains message if {
+	some name, service in input.services
+	real_observation_profile(service)
+	forbidden_ros_command(command_text(service))
+	message := sprintf("service %q invokes a ROS command publisher in the real observation profile", [name])
+}
+
+deny contains "real observation must use the SROS2 observer enclave in Enforce mode" if {
+	service := input.services["real-observation-observer"]
+	environment := object.get(service, "environment", {})
+	object.get(environment, "ROS_SECURITY_ENABLE", "") != "true"
+}
+
+deny contains "real observation must use the SROS2 observer enclave in Enforce mode" if {
+	service := input.services["real-observation-observer"]
+	environment := object.get(service, "environment", {})
+	object.get(environment, "ROS_SECURITY_STRATEGY", "") != "Enforce"
+}
+
+deny contains "real observation must use the SROS2 observer enclave in Enforce mode" if {
+	service := input.services["real-observation-observer"]
+	environment := object.get(service, "environment", {})
+	object.get(environment, "ROS_SECURITY_ENCLAVE_OVERRIDE", "") != "/robotics/observer"
+}
+
 volume_source(volume) := source if {
 	is_object(volume)
 	source := object.get(volume, "source", "")
@@ -175,5 +229,18 @@ forbidden_can_command(token) if {
 	regex.match(
 		"(^|.*/|.*[[:space:]])(cannelloni|cansend|socketcand)([[:space:]].*|$)",
 		lower(token),
+	)
+}
+
+real_observation_profile(service) if {
+	"real-observation" in object.get(service, "profiles", [])
+}
+
+command_text(service) := concat(" ", command_tokens(service))
+
+forbidden_ros_command(command) if {
+	regex.match(
+		"(^|.*[[:space:]])ros2[[:space:]]+(topic[[:space:]]+pub|action[[:space:]]+send_goal|service[[:space:]]+call)([[:space:]].*|$)",
+		lower(command),
 	)
 }

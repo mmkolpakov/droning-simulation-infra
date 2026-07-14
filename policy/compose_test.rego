@@ -126,3 +126,73 @@ test_public_port_is_denied_in_can_observation_profile if {
 	}}}
 	count(violations) == 1
 }
+
+test_real_observation_without_devices_is_allowed if {
+	violations := compose.deny with input as {"services": {"real-observation-observer": {
+		"profiles": ["real-observation"],
+		"command": ["robotics-acceptance", "verify"],
+		"environment": {
+			"ROS_SECURITY_ENABLE": "true",
+			"ROS_SECURITY_STRATEGY": "Enforce",
+			"ROS_SECURITY_ENCLAVE_OVERRIDE": "/robotics/observer",
+		},
+		"cap_drop": ["ALL"],
+		"security_opt": ["no-new-privileges:true"],
+	}}}
+	count(violations) == 0
+}
+
+test_device_is_denied_in_real_observation_profile if {
+	candidate := {
+		"services": {"real-observation-observer": {
+			"profiles": ["real-observation"],
+			"command": ["robotics-acceptance", "verify"],
+			"environment": {
+				"ROS_SECURITY_ENABLE": "true",
+				"ROS_SECURITY_STRATEGY": "Enforce",
+				"ROS_SECURITY_ENCLAVE_OVERRIDE": "/robotics/observer",
+			},
+			"devices": [{"source": "/dev/video0", "target": "/dev/video0"}],
+			"cap_drop": ["ALL"],
+			"security_opt": ["no-new-privileges:true"],
+		}},
+	}
+	violations := compose.deny with input as candidate
+	count(violations) == 1
+}
+
+test_ros_topic_pub_is_denied_in_real_observation_profile if {
+	candidate := {
+		"services": {"real-observation-observer": {
+			"profiles": ["real-observation"],
+			"command": ["bash", "-lc", "ros2 topic pub /cmd_vel geometry_msgs/msg/Twist {}"],
+			"environment": {
+				"ROS_SECURITY_ENABLE": "true",
+				"ROS_SECURITY_STRATEGY": "Enforce",
+				"ROS_SECURITY_ENCLAVE_OVERRIDE": "/robotics/observer",
+			},
+			"cap_drop": ["ALL"],
+			"security_opt": ["no-new-privileges:true"],
+		}},
+	}
+	violations := compose.deny with input as candidate
+	count(violations) == 1
+}
+
+test_permissive_sros2_is_denied_in_real_observation_profile if {
+	candidate := {
+		"services": {"real-observation-observer": {
+			"profiles": ["real-observation"],
+			"command": ["robotics-acceptance", "verify"],
+			"environment": {
+				"ROS_SECURITY_ENABLE": "true",
+				"ROS_SECURITY_STRATEGY": "Permissive",
+				"ROS_SECURITY_ENCLAVE_OVERRIDE": "/robotics/observer",
+			},
+			"cap_drop": ["ALL"],
+			"security_opt": ["no-new-privileges:true"],
+		}},
+	}
+	violations := compose.deny with input as candidate
+	count(violations) == 1
+}

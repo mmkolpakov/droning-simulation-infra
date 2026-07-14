@@ -90,12 +90,15 @@ behavior being tested:
 | `compose.security.yaml` | `security*` | SROS2 Enforce, observer-only enclave, positive and denial checks |
 | `compose.stepped.yaml` | `stepped` | Run Gazebo paused and advance it through `WorldControl` |
 | `compose.edge-attach.yaml` | `edge-attach`, `hil` | Attach-only observation through an external Docker network; HIL is permit-gated and SROS2-enforced |
+| `compose.real-observation.yaml` | `real-observation` | Permit-gated SROS2 observation of a real target; layer after `compose.edge-attach.yaml` |
 | `compose.time.yaml` | `time-chrony`, `time-ptp` | Export host-owned clock observations as contract-aligned OTLP JSON |
 | `compose.serial.yaml` | `serial-preflight` | Verify one exact stable serial device mapping without starting product code |
 | `compose.can-observation.yaml` | `can-observation` | Receive a host SocketCAN stream without exposing the bus to the container |
 
 Containers only observe host time, serial identity, and CAN frames; they cannot
 configure the host clock, udev, PTP interface, or physical bus.
+The real-observation profile has no device mapping or command-capable ROS
+identity. Sensor drivers remain in the separately managed target deployment.
 
 For example, verify the packaged golden MCAP without starting Gazebo:
 
