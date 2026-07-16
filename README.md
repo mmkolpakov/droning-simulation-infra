@@ -75,6 +75,9 @@ validate host time, udev, systemd, and SocketCAN assets reproducibly.
 
 Base images, package snapshots, Python hashes, and foundation revisions are
 pinned in `Dockerfile`, `docker-bake.hcl`, lock files, and `foundation.repos`.
+Ubuntu packages for both amd64 and arm64 resolve from the same signed,
+timestamped `snapshot.ubuntu.com` archive rather than from architecture-specific
+live mirrors.
 Every released image contains exact Debian and Python package manifests under
 `/usr/share/robotics-runtime/`. GitHub Releases record the image digests; each
 image is published with an SBOM, BuildKit provenance, and an artifact
