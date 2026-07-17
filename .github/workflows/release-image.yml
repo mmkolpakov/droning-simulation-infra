@@ -18,6 +18,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  BUILDX_VERSION: v0.35.0
+  # yamllint disable-line rule:line-length
+  BUILDKIT_IMAGE: moby/buildkit:v0.31.1@sha256:6b59b7df63a8cb9902736f9ddf7fcff8261613d3e7449b8ea8b7537fc399c03a
   TRIVY_IMAGE: aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f
 
 jobs:
@@ -51,6 +54,10 @@ jobs:
             target: inference-cpu
             image: inference-cpu
             platforms: linux/amd64,linux/arm64
+          - id: inference-intel
+            target: inference-intel
+            image: inference-intel
+            platforms: linux/amd64
           - id: acceptance-observer
             target: acceptance-observer
             image: acceptance-observer
@@ -63,6 +70,10 @@ jobs:
             target: evidence-sink
             image: evidence-sink
             platforms: linux/amd64,linux/arm64
+          - id: permit-preflight
+            target: permit-preflight
+            image: permit-preflight
+            platforms: linux/amd64,linux/arm64
     env:
       IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/robotics-runtime-infra/${{ matrix.image }}
     steps:
@@ -73,6 +84,11 @@ jobs:
         with:
           platforms: arm64
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4.2.0
+        with:
+          cache-binary: false
+          version: ${{ env.BUILDX_VERSION }}
+          driver-opts: |
+            image=${{ env.BUILDKIT_IMAGE }}
       - uses: docker/setup-compose-action@16feee727cbdc83b6a014e6cc26fec4a79bcf30c  # v2.2.0
         with:
           version: v5.3.1
@@ -113,8 +129,6 @@ jobs:
             IMAGE_VERSION=${{ steps.metadata.outputs.version }}
             SOURCE_DATE_EPOCH=${{ steps.build-metadata.outputs.epoch }}
             VCS_REF=${{ github.sha }}
-          cache-from: type=gha,scope=release-${{ matrix.id }}
-          cache-to: type=gha,mode=max,scope=release-${{ matrix.id }}
           provenance: mode=max
           sbom: true
       - name: Verify the published simulation image
@@ -127,7 +141,8 @@ jobs:
           docker compose -p "$project" pull simulation
           docker compose -p "$project" up --detach --no-build --wait --wait-timeout 120 simulation
           docker compose -p "$project" exec -T simulation \
-            robotics-entrypoint timeout 20 ros2 topic echo /clock --once
+            robotics-entrypoint timeout 20 ros2 topic echo \
+            /clock rosgraph_msgs/msg/Clock --once
           docker compose -p "$project" --profile test run --rm --no-deps test
       - name: Scan the published image
         env:
@@ -227,8 +242,13 @@ jobs:
             echo
             echo "Each image includes BuildKit provenance and an SBOM and has a GitHub artifact attestation."
           } > release-notes.md
+          release_flags=()
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
           gh release create "${GITHUB_REF_NAME}" \
             release-artifacts/digests/*.txt \
+            "${release_flags[@]}" \
             --verify-tag \
             --title "robotics-runtime-infra ${GITHUB_REF_NAME}" \
             --notes-file release-notes.md

@@ -46,6 +46,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  BUILDX_VERSION: v0.35.0
+  # yamllint disable-line rule:line-length
+  BUILDKIT_IMAGE: moby/buildkit:v0.31.1@sha256:6b59b7df63a8cb9902736f9ddf7fcff8261613d3e7449b8ea8b7537fc399c03a
   REGISTRY: local
   VERSION: foundation
   SIMULATION_IMAGE: local/robotics-runtime-infra/simulation:foundation
@@ -65,6 +68,10 @@ jobs:
           version: "0.11.28"
           enable-cache: false
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4.2.0
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver-opts: |
+            image=${{ env.BUILDKIT_IMAGE }}
       - name: Set reproducible build metadata
         run: |
           {
@@ -97,6 +104,7 @@ jobs:
             .venv/bin/pytest \
               tests \
               --robotics-scenario "$GITHUB_WORKSPACE/foundation/acceptance-scenario.yaml" \
+              --robotics-runtime "$GITHUB_WORKSPACE/foundation/runtime-manifest.yaml" \
               --junitxml "$GITHUB_WORKSPACE/artifacts/harness.xml"
           )
       - name: Build foundation runtime images
@@ -107,6 +115,30 @@ jobs:
             --set '*.platform=linux/amd64' \
             --set '*.cache-from=type=gha,scope=foundation-amd64' \
             --set '*.cache-to=type=gha,mode=max,scope=foundation-amd64'
+      - name: Verify embedded foundation revisions
+        run: |
+          contracts_revision="$(git -C dependencies/contracts rev-parse HEAD)"
+          harness_revision="$(git -C dependencies/harness rev-parse HEAD)"
+          contracts_tag="$(git -C dependencies/contracts describe --tags --exact-match)"
+          harness_tag="$(git -C dependencies/harness describe --tags --exact-match)"
+          for image in "${SIMULATION_IMAGE}" "${OBSERVER_IMAGE}"; do
+            test "$(docker run --rm --entrypoint jq "${image}" \
+              -er '.repositories.contracts.version' \
+              /usr/share/robotics-runtime/foundation-lock.json)" = \
+              "${contracts_revision}"
+            test "$(docker run --rm --entrypoint jq "${image}" \
+              -er '.repositories.harness.version' \
+              /usr/share/robotics-runtime/foundation-lock.json)" = \
+              "${harness_revision}"
+          done
+          contracts_version="$(docker run --rm \
+            --entrypoint /opt/venv/bin/python "${OBSERVER_IMAGE}" \
+            -c 'from importlib.metadata import version; print(version("robotics-runtime-contracts"))')"
+          harness_version="$(docker run --rm \
+            --entrypoint /opt/venv/bin/python "${OBSERVER_IMAGE}" \
+            -c 'from importlib.metadata import version; print(version("robotics-acceptance-harness"))')"
+          test "${contracts_tag}" = "v${contracts_version}"
+          test "${harness_tag}" = "v${harness_version}"
       - name: Run scenario against the real ROS graph
         run: |
           project="foundation-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -119,7 +151,8 @@ jobs:
           trap cleanup EXIT
           docker compose -p "$project" up --detach --no-build --wait --wait-timeout 120
           docker compose -p "$project" exec -T simulation \
-            robotics-entrypoint timeout 20 ros2 topic echo /clock --once
+            robotics-entrypoint timeout 20 ros2 topic echo \
+            /clock rosgraph_msgs/msg/Clock --once
           test_container="${project}-test"
           set +e
           docker compose -p "$project" run --name "$test_container" --no-deps test
@@ -151,9 +184,11 @@ jobs:
           ROS_DOMAIN_ID=42 GZ_PARTITION="${project_b}" \
             docker compose -p "$project_b" up --detach --no-build --wait --wait-timeout 120
           docker compose -p "$project_a" exec -T simulation \
-            robotics-entrypoint timeout 20 ros2 topic echo /clock --once
+            robotics-entrypoint timeout 20 ros2 topic echo \
+            /clock rosgraph_msgs/msg/Clock --once
           docker compose -p "$project_b" exec -T simulation \
-            robotics-entrypoint timeout 20 ros2 topic echo /clock --once
+            robotics-entrypoint timeout 20 ros2 topic echo \
+            /clock rosgraph_msgs/msg/Clock --once
       - name: Run the three-repository acceptance path
         run: |
           project="foundation-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -219,6 +254,14 @@ jobs:
           sudo chown -R "$(id -u):$(id -g)" "${run_dir}"
           jq -e '.status == "passed"' \
             "${run_dir}/results/acceptance-result.json"
+          contracts_revision="$(git -C dependencies/contracts rev-parse HEAD)"
+          harness_revision="$(git -C dependencies/harness rev-parse HEAD)"
+          jq -e \
+            --arg contracts_revision "${contracts_revision}" \
+            --arg harness_revision "${harness_revision}" \
+            '.components.contracts_revision == $contracts_revision and
+             .components.harness_revision == $harness_revision' \
+            "${run_dir}/runtime-manifest.json"
           test -s "${run_dir}/results/junit.xml"
           cp -r "${run_dir}/results" artifacts/acceptance-results
           cp "${run_dir}/runtime-manifest.json" artifacts/
