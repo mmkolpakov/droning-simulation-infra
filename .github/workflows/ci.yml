@@ -1009,8 +1009,13 @@ jobs:
             printf 'mismatched execution statement was accepted\n' >&2
             exit 1
           fi
-          jq '.dsseEnvelope.payload = (.dsseEnvelope.payload + "A")' \
-            "${work}/operator.sigstore.json" \
+          docker run --rm \
+            --volume "${work}:/work:ro" \
+            --entrypoint /usr/local/bin/yq \
+            "${PERMIT_PREFLIGHT_IMAGE}" \
+            --output-format json \
+            '.dsseEnvelope.payload = (.dsseEnvelope.payload + "A")' \
+            /work/operator.sigstore.json \
             > "${work}/tampered-operator.sigstore.json"
           if docker run --rm \
             --volume "${work}:/work:ro" \
